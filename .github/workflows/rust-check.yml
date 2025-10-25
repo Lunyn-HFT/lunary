@@ -1,0 +1,23 @@
+name: Rust Compile Check
+
+on:
+  push:
+    branches: [ master, main, dev, test ]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
+      - name: Compile code
+        run: cargo build --verbose
