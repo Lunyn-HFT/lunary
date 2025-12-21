@@ -190,31 +190,36 @@ impl Default for ParserBuilder {
     }
 }
 
-#[allow(clippy::large_enum_variant)]
 pub enum AnyParser<'a> {
-    Simple(Parser),
-    Batch(BatchProcessor),
-    Adaptive(AdaptiveBatchProcessor),
-    Parallel(ParallelParser),
-    WorkStealing(WorkStealingParser),
-    Spsc(SpscParser),
+    Simple(Box<Parser>),
+    Batch(Box<BatchProcessor>),
+    Adaptive(Box<AdaptiveBatchProcessor>),
+    Parallel(Box<ParallelParser>),
+    WorkStealing(Box<WorkStealingParser>),
+    Spsc(Box<SpscParser>),
     ZeroCopy(ZeroCopyParser<'a>),
 }
 
 impl ParserBuilder {
-    pub fn build_any<'a>(&self, data: Option<&'a [u8]>) -> AnyParser<'a> {
+    pub fn build_any<'a>(&self, data: Option<&'a [u8]>) -> crate::Result<AnyParser<'a>> {
         match self.config.mode {
-            ParserMode::Simple => AnyParser::Simple(self.build_simple()),
-            ParserMode::Batch => AnyParser::Batch(self.build_batch()),
-            ParserMode::Adaptive => AnyParser::Adaptive(self.build_adaptive()),
-            ParserMode::Parallel => AnyParser::Parallel(self.build_parallel()),
-            ParserMode::WorkStealing => AnyParser::WorkStealing(self.build_work_stealing()),
-            ParserMode::Spsc => AnyParser::Spsc(self.build_spsc()),
+            ParserMode::Simple => Ok(AnyParser::Simple(Box::new(self.build_simple()))),
+            ParserMode::Batch => Ok(AnyParser::Batch(Box::new(self.build_batch()))),
+            ParserMode::Adaptive => Ok(AnyParser::Adaptive(Box::new(self.build_adaptive()))),
+            ParserMode::Parallel => Ok(AnyParser::Parallel(Box::new(self.build_parallel()))),
+            ParserMode::WorkStealing => Ok(AnyParser::WorkStealing(Box::new(
+                self.build_work_stealing(),
+            ))),
+            ParserMode::Spsc => Ok(AnyParser::Spsc(Box::new(self.build_spsc()))),
             ParserMode::ZeroCopy => {
-                let d = data.expect("ZeroCopy mode requires data");
-                AnyParser::ZeroCopy(self.build_zerocopy(d))
+                let d = data.ok_or_else(|| {
+                    crate::ParseError::InvalidArgument(
+                        "ZeroCopy mode requires data slice to be provided".to_string(),
+                    )
+                })?;
+                Ok(AnyParser::ZeroCopy(self.build_zerocopy(d)))
             }
-            ParserMode::Mmap => AnyParser::Simple(self.build_simple()),
+            ParserMode::Mmap => Ok(AnyParser::Simple(Box::new(self.build_simple()))),
         }
     }
 }

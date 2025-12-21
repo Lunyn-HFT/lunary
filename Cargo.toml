@@ -1,6 +1,6 @@
 [package]
 name = "lunary"
-version = "0.2.0"
+version = "0.2.1"
 authors = ["Lunyn <contact@lunyn.com>"]
 edition = "2021"
 license = "AGPL-3.0-or-later"
@@ -9,7 +9,7 @@ readme = "README.md"
 repository = "https://github.com/Lunyn-HFT/lunary"
 homepage = "https://github.com/Lunyn-HFT/lunary"
 keywords = ["itch", "nasdaq", "parser", "hft", "trading"]
-categories = ["parsing", "finance", "network-programming"]
+categories = ["parsing", "nasdaq", "itch"]
 
 [lib]
 name = "lunary"

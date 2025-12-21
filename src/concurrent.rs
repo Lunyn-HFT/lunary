@@ -150,7 +150,8 @@ impl<T> SpscQueue<T> {
             for _ in 0..SPSC_BUFFER_SIZE {
                 v.push(std::cell::UnsafeCell::new(None));
             }
-            v.try_into().ok().unwrap()
+            v.try_into()
+                .expect("Vec length matches SPSC_BUFFER_SIZE; conversion cannot fail")
         };
         Self {
             buffer,
@@ -326,7 +327,10 @@ impl ConcurrentParser for SpscParser {
     fn submit(&self, data: Vec<u8>) -> Result<()> {
         self.input_queue
             .push(data)
-            .map_err(|_| crate::error::ParseError::BufferOverflow)
+            .map_err(|d| crate::error::ParseError::BufferOverflow {
+                size: d.len(),
+                max: SPSC_BUFFER_SIZE,
+            })
     }
 
     fn recv(&self) -> Option<Vec<Message>> {
@@ -502,9 +506,13 @@ impl ParallelParser {
     }
 
     pub fn submit(&self, data: Vec<u8>) -> Result<()> {
-        self.sender
-            .send(WorkUnit::Owned(data))
-            .map_err(|_| crate::error::ParseError::BufferOverflow)
+        self.sender.send(WorkUnit::Owned(data)).map_err(|e| {
+            let size = match &e.0 {
+                WorkUnit::Owned(v) => v.len(),
+                WorkUnit::ArcSlice(_, s, e) => e - s,
+            };
+            crate::error::ParseError::BufferOverflow { size, max: 0 }
+        })
     }
 
     pub fn submit_arc(&self, data: Arc<[u8]>, start: usize, end: usize) -> Result<()> {
@@ -518,7 +526,13 @@ impl ParallelParser {
         }
         self.sender
             .send(WorkUnit::ArcSlice(data, start, end))
-            .map_err(|_| crate::error::ParseError::BufferOverflow)
+            .map_err(|e| {
+                let size = match &e.0 {
+                    WorkUnit::Owned(v) => v.len(),
+                    WorkUnit::ArcSlice(_, s, e) => e - s,
+                };
+                crate::error::ParseError::BufferOverflow { size, max: 0 }
+            })
     }
 
     pub fn submit_chunk(&self, data: &[u8], chunk_size: usize) -> Result<usize> {
@@ -608,9 +622,10 @@ impl ParserMetrics for ParallelParser {
 
 impl ConcurrentParser for ParallelParser {
     fn submit(&self, data: Vec<u8>) -> Result<()> {
+        let size = data.len();
         self.sender
             .send(WorkUnit::Owned(data))
-            .map_err(|_| crate::error::ParseError::BufferOverflow)
+            .map_err(|_| crate::error::ParseError::BufferOverflow { size, max: 0 })
     }
 
     fn recv(&self) -> Option<Vec<Message>> {

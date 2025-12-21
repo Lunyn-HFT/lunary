@@ -27,7 +27,7 @@ vendor/
 *.log
 *.tmp
 tmp/
-
+*.NASDAQ_ITCH50
 # OS files
 Thumbs.db
 *.exe

@@ -20,7 +20,7 @@ pub use concurrent::{
     WorkerStatsSnapshot,
 };
 pub use config::Config;
-pub use error::{ParseError, Result};
+pub use error::{ParseError, ParseResult, Result};
 pub use messages::{
     AddOrderMessage, AddOrderRef, AddOrderWithMpidMessage, AddOrderWithMpidRef, BrokenTradeMessage,
     BrokenTradeRef, CrossTradeMessage, CrossTradeRef, IpoQuotingPeriodMessage, IpoQuotingPeriodRef,

@@ -111,10 +111,16 @@ impl Parser {
         let current_len = self.buffer.len();
         let new_total = current_len
             .checked_add(data.len())
-            .ok_or(ParseError::BufferOverflow)?;
+            .ok_or(ParseError::BufferOverflow {
+                size: usize::MAX,
+                max: self.config.max_buffer_size,
+            })?;
 
         if new_total > self.config.max_buffer_size {
-            return Err(ParseError::BufferOverflow);
+            return Err(ParseError::BufferOverflow {
+                size: new_total,
+                max: self.config.max_buffer_size,
+            });
         }
 
         let compact_threshold = self.config.max_buffer_size / 2;
@@ -174,9 +180,10 @@ impl Parser {
         let length = u16::from_be_bytes([remaining[0], remaining[1]]) as usize;
 
         if length > self.config.max_message_size {
-            return Err(ParseError::InsufficientData {
-                expected: length,
-                actual: self.config.max_message_size,
+            return Err(ParseError::LengthMismatch {
+                msg_type: remaining[2],
+                declared: length,
+                expected: self.config.max_message_size,
             });
         }
 
@@ -196,9 +203,10 @@ impl Parser {
         let message_type = remaining[2];
         let expected = EXPECTED_LENGTHS[message_type as usize] as usize;
         if expected != 0 && expected != length {
-            return Err(ParseError::InsufficientData {
+            return Err(ParseError::LengthMismatch {
+                msg_type: message_type,
+                declared: length,
                 expected,
-                actual: length,
             });
         }
 
@@ -206,9 +214,8 @@ impl Parser {
         let payload_len = match length.checked_sub(1) {
             Some(v) => v,
             None => {
-                return Err(ParseError::InsufficientData {
-                    expected: 1,
-                    actual: length,
+                return Err(ParseError::InvalidHeader {
+                    reason: "message length must be at least 1 byte for message type",
                 })
             }
         };
@@ -416,9 +423,9 @@ impl Parser {
     #[inline(always)]
     fn read_u16(&self, data: &[u8], pos: &mut usize) -> Result<u16> {
         if *pos + 2 > data.len() {
-            return Err(ParseError::InsufficientData {
-                expected: 2,
-                actual: data.len().saturating_sub(*pos),
+            return Err(ParseError::TruncatedMessage {
+                expected: *pos + 2,
+                actual: data.len(),
             });
         }
         #[cfg(feature = "simd")]
@@ -432,9 +439,9 @@ impl Parser {
     #[inline(always)]
     fn read_u32(&self, data: &[u8], pos: &mut usize) -> Result<u32> {
         if *pos + 4 > data.len() {
-            return Err(ParseError::InsufficientData {
-                expected: 4,
-                actual: data.len().saturating_sub(*pos),
+            return Err(ParseError::TruncatedMessage {
+                expected: *pos + 4,
+                actual: data.len(),
             });
         }
         #[cfg(feature = "simd")]
@@ -449,9 +456,9 @@ impl Parser {
     #[inline(always)]
     fn read_u64(&self, data: &[u8], pos: &mut usize) -> Result<u64> {
         if *pos + 8 > data.len() {
-            return Err(ParseError::InsufficientData {
-                expected: 8,
-                actual: data.len().saturating_sub(*pos),
+            return Err(ParseError::TruncatedMessage {
+                expected: *pos + 8,
+                actual: data.len(),
             });
         }
         #[cfg(feature = "simd")]
@@ -474,9 +481,9 @@ impl Parser {
     #[inline(always)]
     fn read_u8(&self, data: &[u8], pos: &mut usize) -> Result<u8> {
         if *pos >= data.len() {
-            return Err(ParseError::InsufficientData {
-                expected: 1,
-                actual: 0,
+            return Err(ParseError::TruncatedMessage {
+                expected: *pos + 1,
+                actual: data.len(),
             });
         }
         let value = unsafe { *data.get_unchecked(*pos) };
@@ -487,9 +494,9 @@ impl Parser {
     #[inline(always)]
     fn read_stock(&self, data: &[u8], offset: &mut usize) -> Result<[u8; 8]> {
         if *offset + 8 > data.len() {
-            return Err(ParseError::InsufficientData {
-                expected: 8,
-                actual: data.len().saturating_sub(*offset),
+            return Err(ParseError::TruncatedMessage {
+                expected: *offset + 8,
+                actual: data.len(),
             });
         }
         let mut stock = [0u8; 8];
@@ -503,9 +510,9 @@ impl Parser {
     #[inline(always)]
     fn read_mpid(&self, data: &[u8], offset: &mut usize) -> Result<[u8; 4]> {
         if *offset + 4 > data.len() {
-            return Err(ParseError::InsufficientData {
-                expected: 4,
-                actual: data.len().saturating_sub(*offset),
+            return Err(ParseError::TruncatedMessage {
+                expected: *offset + 4,
+                actual: data.len(),
             });
         }
         let mut mpid = [0u8; 4];
@@ -519,9 +526,9 @@ impl Parser {
     #[inline(always)]
     fn read_reason(&self, data: &[u8], offset: &mut usize) -> Result<[u8; 4]> {
         if *offset + 4 > data.len() {
-            return Err(ParseError::InsufficientData {
-                expected: 4,
-                actual: data.len().saturating_sub(*offset),
+            return Err(ParseError::TruncatedMessage {
+                expected: *offset + 4,
+                actual: data.len(),
             });
         }
         let mut reason = [0u8; 4];
@@ -535,9 +542,9 @@ impl Parser {
     #[inline(always)]
     fn read_issue_sub_type(&self, data: &[u8], offset: &mut usize) -> Result<[u8; 2]> {
         if *offset + 2 > data.len() {
-            return Err(ParseError::InsufficientData {
-                expected: 2,
-                actual: data.len().saturating_sub(*offset),
+            return Err(ParseError::TruncatedMessage {
+                expected: *offset + 2,
+                actual: data.len(),
             });
         }
         let mut sub_type = [0u8; 2];
@@ -551,9 +558,9 @@ impl Parser {
     #[inline(always)]
     fn read_timestamp(&self, data: &[u8], pos: &mut usize) -> Result<u64> {
         if *pos + 6 > data.len() {
-            return Err(ParseError::InsufficientData {
-                expected: 6,
-                actual: data.len().saturating_sub(*pos),
+            return Err(ParseError::TruncatedMessage {
+                expected: *pos + 6,
+                actual: data.len(),
             });
         }
         #[cfg(feature = "simd")]
