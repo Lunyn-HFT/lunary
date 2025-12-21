@@ -198,6 +198,7 @@ pub enum AnyParser<'a> {
     WorkStealing(Box<WorkStealingParser>),
     Spsc(Box<SpscParser>),
     ZeroCopy(ZeroCopyParser<'a>),
+    Mmap(Box<MmapParser>),
 }
 
 impl ParserBuilder {
@@ -219,7 +220,9 @@ impl ParserBuilder {
                 })?;
                 Ok(AnyParser::ZeroCopy(self.build_zerocopy(d)))
             }
-            ParserMode::Mmap => Ok(AnyParser::Simple(Box::new(self.build_simple()))),
+            ParserMode::Mmap => Err(crate::ParseError::InvalidArgument(
+                "Mmap mode requires a file path, use build_mmap instead".to_string(),
+            )),
         }
     }
 }

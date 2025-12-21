@@ -1,3 +1,4 @@
+use crate::error::ParseError;
 use std::marker::PhantomData;
 
 pub trait ParseMessage<'a>: Sized {
@@ -32,9 +33,10 @@ impl<'a> Stock<'a> {
     }
 
     #[inline(always)]
-    pub fn as_str(&self) -> &str {
+    pub fn as_str(&self) -> Result<&str, ParseError> {
         let end = self.data.iter().position(|&b| b == b' ').unwrap_or(8);
-        unsafe { std::str::from_utf8_unchecked(&self.data[..end]) }
+        std::str::from_utf8(&self.data[..end])
+            .map_err(|_| ParseError::InvalidUtf8 { field: "stock" })
     }
 
     #[inline(always)]
@@ -69,9 +71,10 @@ impl<'a> Mpid<'a> {
     }
 
     #[inline(always)]
-    pub fn as_str(&self) -> &str {
+    pub fn as_str(&self) -> Result<&str, ParseError> {
         let end = self.data.iter().position(|&b| b == b' ').unwrap_or(4);
-        unsafe { std::str::from_utf8_unchecked(&self.data[..end]) }
+        std::str::from_utf8(&self.data[..end])
+            .map_err(|_| ParseError::InvalidUtf8 { field: "mpid" })
     }
 
     #[inline(always)]
@@ -557,13 +560,13 @@ mod tests {
     fn test_stock_as_str() {
         let data: [u8; 8] = *b"AAPL    ";
         let stock = Stock::new(&data);
-        assert_eq!(stock.as_str(), "AAPL");
+        assert_eq!(stock.as_str().unwrap(), "AAPL");
     }
 
     #[test]
     fn test_mpid_as_str() {
         let data: [u8; 4] = *b"NSDQ";
         let mpid = Mpid::new(&data);
-        assert_eq!(mpid.as_str(), "NSDQ");
+        assert_eq!(mpid.as_str().unwrap(), "NSDQ");
     }
 }

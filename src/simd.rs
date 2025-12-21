@@ -1658,3 +1658,81 @@ impl ParseDiagnosticsExt {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_simd_detection() {
+        let info = simd_info();
+        let _ = info.best_available();
+    }
+
+    #[test]
+    fn test_read_u16_unchecked() {
+        let data = [0x12, 0x34, 0x56, 0x78];
+        unsafe {
+            assert_eq!(read_u16_unchecked(&data, 0), 0x1234);
+            assert_eq!(read_u16_unchecked(&data, 2), 0x5678);
+        }
+    }
+
+    #[test]
+    fn test_read_u32_unchecked() {
+        let data = [0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC];
+        unsafe {
+            assert_eq!(read_u32_unchecked(&data, 0), 0x12345678);
+            assert_eq!(read_u32_unchecked(&data, 2), 0x56789ABC);
+        }
+    }
+
+    #[test]
+    fn test_read_u64_unchecked() {
+        let data = [0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0, 0x11, 0x22];
+        unsafe {
+            assert_eq!(read_u64_unchecked(&data, 0), 0x123456789ABCDEF0);
+            assert_eq!(read_u64_unchecked(&data, 2), 0x56789ABCDEF01122);
+        }
+    }
+
+    #[test]
+    fn test_read_timestamp_unchecked() {
+        let data = [0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE];
+        unsafe {
+            assert_eq!(read_timestamp_unchecked(&data, 0), 0x123456789ABC);
+        }
+    }
+
+    #[test]
+    fn test_memcpy_nontemporal_small() {
+        let src = [1, 2, 3, 4, 5];
+        let mut dst = [0; 5];
+        unsafe {
+            memcpy_nontemporal(dst.as_mut_ptr(), src.as_ptr(), 5);
+        }
+        assert_eq!(dst, src);
+    }
+
+    #[test]
+    fn test_memcpy_nontemporal_large() {
+        let src = vec![42; 128];
+        let mut dst = vec![0; 128];
+        unsafe {
+            memcpy_nontemporal(dst.as_mut_ptr(), src.as_ptr(), 128);
+        }
+        assert_eq!(dst, src);
+    }
+
+    #[test]
+    fn test_simd_level_fallback() {
+        let info = SimdInfo {
+            available: false,
+            sse2: false,
+            ssse3: false,
+            avx2: false,
+            avx512: false,
+        };
+        assert_eq!(info.register_width(), 8);
+    }
+}

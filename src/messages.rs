@@ -1,8 +1,10 @@
+use crate::error::ParseError;
 use std::marker::PhantomData;
+
 #[inline(always)]
-fn ascii_to_str(data: &[u8]) -> &str {
+fn ascii_to_str<'a>(data: &'a [u8], field: &'static str) -> Result<&'a str, ParseError> {
     let end = data.iter().position(|&b| b == b' ').unwrap_or(data.len());
-    unsafe { std::str::from_utf8_unchecked(&data[..end]) }
+    std::str::from_utf8(&data[..end]).map_err(|_| ParseError::InvalidUtf8 { field })
 }
 
 pub trait ToOwnedMessage {
@@ -228,8 +230,8 @@ pub struct StockDirectoryRef<'a> {
 
 impl<'a> StockDirectoryRef<'a> {
     #[inline]
-    pub fn stock_str(&self) -> &str {
-        ascii_to_str(self.stock)
+    pub fn stock_str(&self) -> Result<&str, ParseError> {
+        ascii_to_str(self.stock, "stock")
     }
 
     #[inline]
@@ -278,8 +280,8 @@ pub struct StockTradingActionRef<'a> {
 
 impl<'a> StockTradingActionRef<'a> {
     #[inline]
-    pub fn stock_str(&self) -> &str {
-        ascii_to_str(self.stock)
+    pub fn stock_str(&self) -> Result<&str, ParseError> {
+        ascii_to_str(self.stock, "stock")
     }
 
     #[inline]
@@ -316,8 +318,8 @@ pub struct RegShoRestrictionRef<'a> {
 
 impl<'a> RegShoRestrictionRef<'a> {
     #[inline]
-    pub fn stock_str(&self) -> &str {
-        ascii_to_str(self.stock)
+    pub fn stock_str(&self) -> Result<&str, ParseError> {
+        ascii_to_str(self.stock, "stock")
     }
 
     #[inline]
@@ -355,13 +357,13 @@ pub struct MarketParticipantPositionRef<'a> {
 
 impl<'a> MarketParticipantPositionRef<'a> {
     #[inline]
-    pub fn stock_str(&self) -> &str {
-        ascii_to_str(self.stock)
+    pub fn stock_str(&self) -> Result<&str, ParseError> {
+        ascii_to_str(self.stock, "stock")
     }
 
     #[inline]
-    pub fn mpid_str(&self) -> &str {
-        ascii_to_str(self.mpid)
+    pub fn mpid_str(&self) -> Result<&str, ParseError> {
+        ascii_to_str(self.mpid, "mpid")
     }
 
     #[inline]
@@ -501,8 +503,8 @@ pub struct IpoQuotingPeriodRef<'a> {
 
 impl<'a> IpoQuotingPeriodRef<'a> {
     #[inline]
-    pub fn stock_str(&self) -> &str {
-        ascii_to_str(self.stock)
+    pub fn stock_str(&self) -> Result<&str, ParseError> {
+        ascii_to_str(self.stock, "stock")
     }
 
     #[inline]
@@ -542,8 +544,8 @@ pub struct AddOrderRef<'a> {
 
 impl<'a> AddOrderRef<'a> {
     #[inline]
-    pub fn stock_str(&self) -> &str {
-        ascii_to_str(self.stock)
+    pub fn stock_str(&self) -> Result<&str, ParseError> {
+        ascii_to_str(self.stock, "stock")
     }
 
     #[inline]
@@ -585,13 +587,13 @@ pub struct AddOrderWithMpidRef<'a> {
 
 impl<'a> AddOrderWithMpidRef<'a> {
     #[inline]
-    pub fn stock_str(&self) -> &str {
-        ascii_to_str(self.stock)
+    pub fn stock_str(&self) -> Result<&str, ParseError> {
+        ascii_to_str(self.stock, "stock")
     }
 
     #[inline]
-    pub fn attribution_str(&self) -> &str {
-        ascii_to_str(self.attribution)
+    pub fn attribution_str(&self) -> Result<&str, ParseError> {
+        ascii_to_str(self.attribution, "attribution")
     }
 
     #[inline]
@@ -905,8 +907,8 @@ pub struct TradeRef<'a> {
 
 impl<'a> TradeRef<'a> {
     #[inline]
-    pub fn stock_str(&self) -> &str {
-        ascii_to_str(self.stock)
+    pub fn stock_str(&self) -> Result<&str, ParseError> {
+        ascii_to_str(self.stock, "stock")
     }
 
     #[inline]
@@ -948,8 +950,8 @@ pub struct CrossTradeRef<'a> {
 
 impl<'a> CrossTradeRef<'a> {
     #[inline]
-    pub fn stock_str(&self) -> &str {
-        ascii_to_str(self.stock)
+    pub fn stock_str(&self) -> Result<&str, ParseError> {
+        ascii_to_str(self.stock, "stock")
     }
 
     #[inline]
@@ -1035,8 +1037,8 @@ pub struct NetOrderImbalanceRef<'a> {
 
 impl<'a> NetOrderImbalanceRef<'a> {
     #[inline]
-    pub fn stock_str(&self) -> &str {
-        ascii_to_str(self.stock)
+    pub fn stock_str(&self) -> Result<&str, ParseError> {
+        ascii_to_str(self.stock, "stock")
     }
 
     #[inline]
@@ -1078,8 +1080,8 @@ pub struct RetailPriceImprovementRef<'a> {
 
 impl<'a> RetailPriceImprovementRef<'a> {
     #[inline]
-    pub fn stock_str(&self) -> &str {
-        ascii_to_str(self.stock)
+    pub fn stock_str(&self) -> Result<&str, ParseError> {
+        ascii_to_str(self.stock, "stock")
     }
 
     #[inline]
@@ -1118,8 +1120,8 @@ pub struct LuldAuctionCollarRef<'a> {
 
 impl<'a> LuldAuctionCollarRef<'a> {
     #[inline]
-    pub fn stock_str(&self) -> &str {
-        ascii_to_str(self.stock)
+    pub fn stock_str(&self) -> Result<&str, ParseError> {
+        ascii_to_str(self.stock, "stock")
     }
 
     #[inline]

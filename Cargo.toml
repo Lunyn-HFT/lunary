@@ -9,7 +9,7 @@ readme = "README.md"
 repository = "https://github.com/Lunyn-HFT/lunary"
 homepage = "https://github.com/Lunyn-HFT/lunary"
 keywords = ["itch", "nasdaq", "parser", "hft", "trading"]
-categories = ["parsing", "nasdaq", "itch"]
+categories = ["parsing", "finance", "network-programming"]
 
 [lib]
 name = "lunary"
