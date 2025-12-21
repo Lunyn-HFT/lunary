@@ -774,10 +774,9 @@ fn bench_spsc(data: &[u8]) -> Result<(u64, f64, f64)> {
 
         while offset < data_for_producer.len() {
             let end = find_message_boundary(&data_for_producer, offset + chunk_size);
-            let chunk = data_for_producer[offset..end].to_vec();
 
             loop {
-                match parser_producer.submit(chunk.clone()) {
+                match parser_producer.submit_arc(data_for_producer.clone(), offset, end) {
                     Ok(_) => break,
                     Err(_) => {
                         std::thread::yield_now();
@@ -881,10 +880,9 @@ fn run_spsc(data: &[u8]) -> Result<()> {
 
         while offset < data_for_producer.len() {
             let end = find_message_boundary(&data_for_producer, offset + chunk_size);
-            let chunk = data_for_producer[offset..end].to_vec();
 
             loop {
-                match parser_producer.submit(chunk.clone()) {
+                match parser_producer.submit_arc(data_for_producer.clone(), offset, end) {
                     Ok(_) => break,
                     Err(_) => {
                         std::thread::yield_now();
@@ -1155,9 +1153,10 @@ fn run_worker_stats(data: &[u8]) -> Result<()> {
 
     let chunk_size = (data.len() / num_workers).max(512 * 1024);
     let parser = WorkStealingParser::new(num_workers);
+    let data_arc: Arc<[u8]> = Arc::from(data);
 
     let t0 = Instant::now();
-    let chunks_sent = parser.submit_chunks(data, chunk_size);
+    let chunks_sent = parser.submit_chunks_arc(data_arc, chunk_size);
 
     let mut total_messages = 0;
     for _ in 0..chunks_sent {
@@ -1550,9 +1549,10 @@ fn run_feature_comparison(data: &[u8]) -> Result<()> {
 
     let chunk_size = (data.len() / num_workers).max(512 * 1024);
     let parser = WorkStealingParser::new(num_workers);
+    let data_arc: Arc<[u8]> = Arc::from(data);
 
     let t0 = Instant::now();
-    let chunks_sent = parser.submit_chunks(data, chunk_size);
+    let chunks_sent = parser.submit_chunks_arc(data_arc, chunk_size);
     let mut parallel_count = 0;
     for _ in 0..chunks_sent {
         if let Some(messages) = parser.recv() {

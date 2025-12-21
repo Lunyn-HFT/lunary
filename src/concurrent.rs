@@ -256,7 +256,7 @@ impl<T> Default for SpscQueue<T> {
 }
 
 pub struct SpscParser {
-    input_queue: Arc<SpscQueue<Vec<u8>>>,
+    input_queue: Arc<SpscQueue<WorkUnit>>,
     output_queue: Arc<SpscQueue<Vec<Message>>>,
     worker: Option<JoinHandle<()>>,
     shutdown: Arc<AtomicBool>,
@@ -266,7 +266,7 @@ pub struct SpscParser {
 
 impl SpscParser {
     pub fn new() -> Self {
-        let input_queue: Arc<SpscQueue<Vec<u8>>> = Arc::new(SpscQueue::new());
+        let input_queue: Arc<SpscQueue<WorkUnit>> = Arc::new(SpscQueue::new());
         let output_queue: Arc<SpscQueue<Vec<Message>>> = Arc::new(SpscQueue::new());
         let shutdown = Arc::new(AtomicBool::new(false));
         let stats = Arc::new(AtomicStats::new());
@@ -286,9 +286,14 @@ impl SpscParser {
                 }
 
                 match input_q.pop() {
-                    Some(data) => {
-                        let data_len = data.len();
-                        match parser.parse_all(&data) {
+                    Some(work_unit) => {
+                        let (data_slice, data_len) = match &work_unit {
+                            WorkUnit::Owned(v) => (v.as_slice(), v.len()),
+                            WorkUnit::ArcSlice(arc, start, end) => {
+                                (&arc[*start..*end], end - start)
+                            }
+                        };
+                        match parser.parse_all(data_slice) {
                             Ok(messages) => {
                                 stats_ref.add_messages(messages.len() as u64);
                                 stats_ref.add_bytes(data_len as u64);
@@ -318,19 +323,42 @@ impl SpscParser {
         }
     }
 
-    pub fn stats(&self) -> &AtomicStats {
-        &self.stats
+    pub fn submit_arc(&self, data: Arc<[u8]>, start: usize, end: usize) -> Result<()> {
+        if start >= end || end > data.len() {
+            return Err(crate::error::ParseError::InvalidArgument(format!(
+                "invalid range {}..{} (len={})",
+                start,
+                end,
+                data.len()
+            )));
+        }
+        self.input_queue
+            .push(WorkUnit::ArcSlice(data, start, end))
+            .map_err(|d| {
+                let size = match &d {
+                    WorkUnit::Owned(v) => v.len(),
+                    WorkUnit::ArcSlice(_, s, e) => e - s,
+                };
+                crate::error::ParseError::BufferOverflow {
+                    size,
+                    max: SPSC_BUFFER_SIZE,
+                }
+            })
     }
 }
 
 impl ConcurrentParser for SpscParser {
     fn submit(&self, data: Vec<u8>) -> Result<()> {
-        self.input_queue
-            .push(data)
-            .map_err(|d| crate::error::ParseError::BufferOverflow {
-                size: d.len(),
+        self.input_queue.push(WorkUnit::Owned(data)).map_err(|d| {
+            let size = match &d {
+                WorkUnit::Owned(v) => v.len(),
+                WorkUnit::ArcSlice(_, s, e) => e - s,
+            };
+            crate::error::ParseError::BufferOverflow {
+                size,
                 max: SPSC_BUFFER_SIZE,
-            })
+            }
+        })
     }
 
     fn recv(&self) -> Option<Vec<Message>> {
@@ -535,11 +563,14 @@ impl ParallelParser {
             })
     }
 
-    pub fn submit_chunk(&self, data: &[u8], chunk_size: usize) -> Result<usize> {
+    pub fn submit_chunk(&self, data: Arc<[u8]>, chunk_size: usize) -> Result<usize> {
         let mut submitted = 0;
-        for chunk in data.chunks(chunk_size) {
-            self.submit(chunk.to_vec())?;
+        let mut offset = 0;
+        while offset < data.len() {
+            let end = std::cmp::min(offset + chunk_size, data.len());
+            self.submit_arc(Arc::clone(&data), offset, end)?;
             submitted += 1;
+            offset = end;
         }
         Ok(submitted)
     }
@@ -1722,11 +1753,15 @@ impl WorkStealingParser {
         self.injector.push(WorkUnit::ArcSlice(data, start, end));
     }
 
-    pub fn submit_chunks(&self, data: &[u8], chunk_size: usize) -> usize {
+    pub fn submit_chunks(&self, data: Arc<[u8]>, chunk_size: usize) -> usize {
         let mut count = 0;
-        for chunk in data.chunks(chunk_size) {
-            self.injector.push(WorkUnit::Owned(chunk.to_vec()));
+        let mut offset = 0;
+        while offset < data.len() {
+            let end = std::cmp::min(offset + chunk_size, data.len());
+            self.injector
+                .push(WorkUnit::ArcSlice(Arc::clone(&data), offset, end));
             count += 1;
+            offset = end;
         }
         count
     }
