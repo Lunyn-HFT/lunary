@@ -9,6 +9,7 @@ pub mod mmap;
 pub mod parser;
 pub mod simd;
 pub mod zerocopy;
+pub mod zerocopy_types;
 
 mod builder;
 
@@ -46,8 +47,10 @@ pub use simd::{
     ParseDiagnosticsExt, SimdDiagnostics, SimdInfo, SimdLevel, ValidationError, ValidationResult,
 };
 pub use zerocopy::{
-    IntoOwned, MessageHeader, MessageVisitor, Mpid, ParseMessage, Stock, ZeroCopyBatchProcessor,
-    ZeroCopyIterator, ZeroCopyMessage, ZeroCopyParser,
+    IntoOwned, MessageVisitor, Mpid, ParseMessage, Stock, ZeroCopyBatchProcessor, ZeroCopyIterator,
+    ZeroCopyMessage, ZeroCopyParser,
 };
+
+pub use zerocopy_types::MessageHeaderRaw as MessageHeader;
 
 pub mod bench;
