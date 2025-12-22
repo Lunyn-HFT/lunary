@@ -12,6 +12,16 @@ use std::time::{Duration, Instant};
 
 const CACHE_LINE_SIZE: usize = 64;
 
+macro_rules! dispatch_fn {
+    ($name:ident, $variant:ident, $parse_fn:ident) => {
+        #[inline(always)]
+        fn $name(&self, data: &[u8]) -> Result<Message> {
+            let mut pos = 0;
+            Ok(Message::$variant(self.$parse_fn(data, &mut pos)?))
+        }
+    };
+}
+
 #[repr(C, align(64))]
 pub struct Parser {
     buffer: Vec<u8>,
@@ -260,165 +270,63 @@ impl Parser {
         Ok(out)
     }
 
-    #[inline(always)]
-    fn dispatch_system_event(&self, data: &[u8]) -> Result<Message> {
-        let mut pos = 0;
-        Ok(Message::SystemEvent(
-            self.parse_system_event(data, &mut pos)?,
-        ))
-    }
-
-    #[inline(always)]
-    fn dispatch_stock_directory(&self, data: &[u8]) -> Result<Message> {
-        let mut pos = 0;
-        Ok(Message::StockDirectory(
-            self.parse_stock_directory(data, &mut pos)?,
-        ))
-    }
-
-    #[inline(always)]
-    fn dispatch_stock_trading_action(&self, data: &[u8]) -> Result<Message> {
-        let mut pos = 0;
-        Ok(Message::StockTradingAction(
-            self.parse_stock_trading_action(data, &mut pos)?,
-        ))
-    }
-
-    #[inline(always)]
-    fn dispatch_reg_sho(&self, data: &[u8]) -> Result<Message> {
-        let mut pos = 0;
-        Ok(Message::RegShoRestriction(
-            self.parse_reg_sho_restriction(data, &mut pos)?,
-        ))
-    }
-
-    #[inline(always)]
-    fn dispatch_mpp(&self, data: &[u8]) -> Result<Message> {
-        let mut pos = 0;
-        Ok(Message::MarketParticipantPosition(
-            self.parse_market_participant_position(data, &mut pos)?,
-        ))
-    }
-
-    #[inline(always)]
-    fn dispatch_mwcb_decline(&self, data: &[u8]) -> Result<Message> {
-        let mut pos = 0;
-        Ok(Message::MwcbDeclineLevel(
-            self.parse_mwcb_decline_level(data, &mut pos)?,
-        ))
-    }
-
-    #[inline(always)]
-    fn dispatch_mwcb_status(&self, data: &[u8]) -> Result<Message> {
-        let mut pos = 0;
-        Ok(Message::MwcbStatus(self.parse_mwcb_status(data, &mut pos)?))
-    }
-
-    #[inline(always)]
-    fn dispatch_ipo(&self, data: &[u8]) -> Result<Message> {
-        let mut pos = 0;
-        Ok(Message::IpoQuotingPeriod(
-            self.parse_ipo_quoting_period(data, &mut pos)?,
-        ))
-    }
-
-    #[inline(always)]
-    fn dispatch_add_order(&self, data: &[u8]) -> Result<Message> {
-        let mut pos = 0;
-        Ok(Message::AddOrder(self.parse_add_order(data, &mut pos)?))
-    }
-
-    #[inline(always)]
-    fn dispatch_add_order_mpid(&self, data: &[u8]) -> Result<Message> {
-        let mut pos = 0;
-        Ok(Message::AddOrderWithMpid(
-            self.parse_add_order_with_mpid(data, &mut pos)?,
-        ))
-    }
-
-    #[inline(always)]
-    fn dispatch_order_exec(&self, data: &[u8]) -> Result<Message> {
-        let mut pos = 0;
-        Ok(Message::OrderExecuted(
-            self.parse_order_executed(data, &mut pos)?,
-        ))
-    }
-
-    #[inline(always)]
-    fn dispatch_order_exec_price(&self, data: &[u8]) -> Result<Message> {
-        let mut pos = 0;
-        Ok(Message::OrderExecutedWithPrice(
-            self.parse_order_executed_with_price(data, &mut pos)?,
-        ))
-    }
-
-    #[inline(always)]
-    fn dispatch_order_cancel(&self, data: &[u8]) -> Result<Message> {
-        let mut pos = 0;
-        Ok(Message::OrderCancel(
-            self.parse_order_cancel(data, &mut pos)?,
-        ))
-    }
-
-    #[inline(always)]
-    fn dispatch_order_delete(&self, data: &[u8]) -> Result<Message> {
-        let mut pos = 0;
-        Ok(Message::OrderDelete(
-            self.parse_order_delete(data, &mut pos)?,
-        ))
-    }
-
-    #[inline(always)]
-    fn dispatch_order_replace(&self, data: &[u8]) -> Result<Message> {
-        let mut pos = 0;
-        Ok(Message::OrderReplace(
-            self.parse_order_replace(data, &mut pos)?,
-        ))
-    }
-
-    #[inline(always)]
-    fn dispatch_trade(&self, data: &[u8]) -> Result<Message> {
-        let mut pos = 0;
-        Ok(Message::Trade(self.parse_trade(data, &mut pos)?))
-    }
-
-    #[inline(always)]
-    fn dispatch_cross_trade(&self, data: &[u8]) -> Result<Message> {
-        let mut pos = 0;
-        Ok(Message::CrossTrade(self.parse_cross_trade(data, &mut pos)?))
-    }
-
-    #[inline(always)]
-    fn dispatch_broken_trade(&self, data: &[u8]) -> Result<Message> {
-        let mut pos = 0;
-        Ok(Message::BrokenTrade(
-            self.parse_broken_trade(data, &mut pos)?,
-        ))
-    }
-
-    #[inline(always)]
-    fn dispatch_noii(&self, data: &[u8]) -> Result<Message> {
-        let mut pos = 0;
-        Ok(Message::NetOrderImbalance(
-            self.parse_net_order_imbalance(data, &mut pos)?,
-        ))
-    }
-
-    #[inline(always)]
-    fn dispatch_rpi(&self, data: &[u8]) -> Result<Message> {
-        let mut pos = 0;
-        Ok(Message::RetailPriceImprovement(
-            self.parse_retail_price_improvement(data, &mut pos)?,
-        ))
-    }
-
-    #[inline(always)]
-    fn dispatch_luld_auction_collar(&self, data: &[u8]) -> Result<Message> {
-        let mut pos = 0;
-        Ok(Message::LuldAuctionCollar(
-            self.parse_luld_auction_collar(data, &mut pos)?,
-        ))
-    }
+    dispatch_fn!(dispatch_system_event, SystemEvent, parse_system_event);
+    dispatch_fn!(
+        dispatch_stock_directory,
+        StockDirectory,
+        parse_stock_directory
+    );
+    dispatch_fn!(
+        dispatch_stock_trading_action,
+        StockTradingAction,
+        parse_stock_trading_action
+    );
+    dispatch_fn!(
+        dispatch_reg_sho,
+        RegShoRestriction,
+        parse_reg_sho_restriction
+    );
+    dispatch_fn!(
+        dispatch_mpp,
+        MarketParticipantPosition,
+        parse_market_participant_position
+    );
+    dispatch_fn!(
+        dispatch_mwcb_decline,
+        MwcbDeclineLevel,
+        parse_mwcb_decline_level
+    );
+    dispatch_fn!(dispatch_mwcb_status, MwcbStatus, parse_mwcb_status);
+    dispatch_fn!(dispatch_ipo, IpoQuotingPeriod, parse_ipo_quoting_period);
+    dispatch_fn!(dispatch_add_order, AddOrder, parse_add_order);
+    dispatch_fn!(
+        dispatch_add_order_mpid,
+        AddOrderWithMpid,
+        parse_add_order_with_mpid
+    );
+    dispatch_fn!(dispatch_order_exec, OrderExecuted, parse_order_executed);
+    dispatch_fn!(
+        dispatch_order_exec_price,
+        OrderExecutedWithPrice,
+        parse_order_executed_with_price
+    );
+    dispatch_fn!(dispatch_order_cancel, OrderCancel, parse_order_cancel);
+    dispatch_fn!(dispatch_order_delete, OrderDelete, parse_order_delete);
+    dispatch_fn!(dispatch_order_replace, OrderReplace, parse_order_replace);
+    dispatch_fn!(dispatch_trade, Trade, parse_trade);
+    dispatch_fn!(dispatch_cross_trade, CrossTrade, parse_cross_trade);
+    dispatch_fn!(dispatch_broken_trade, BrokenTrade, parse_broken_trade);
+    dispatch_fn!(dispatch_noii, NetOrderImbalance, parse_net_order_imbalance);
+    dispatch_fn!(
+        dispatch_rpi,
+        RetailPriceImprovement,
+        parse_retail_price_improvement
+    );
+    dispatch_fn!(
+        dispatch_luld_auction_collar,
+        LuldAuctionCollar,
+        parse_luld_auction_collar
+    );
 
     #[inline(always)]
     fn read_u16(&self, data: &[u8], pos: &mut usize) -> Result<u16> {

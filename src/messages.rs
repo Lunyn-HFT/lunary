@@ -68,12 +68,9 @@ pub enum MessageRef<'a> {
     LuldAuctionCollar(LuldAuctionCollarRef<'a>),
 }
 
-impl<'a> ToOwnedMessage for MessageRef<'a> {
-    type Owned = Message;
-
-    #[inline]
-    fn to_owned_message(&self) -> Message {
-        match self {
+macro_rules! message_ref_to_owned_match {
+    ($self:expr) => {
+        match $self {
             MessageRef::SystemEvent(r) => Message::SystemEvent(r.to_owned_message()),
             MessageRef::StockDirectory(r) => Message::StockDirectory(r.to_owned_message()),
             MessageRef::StockTradingAction(r) => Message::StockTradingAction(r.to_owned_message()),
@@ -102,18 +99,21 @@ impl<'a> ToOwnedMessage for MessageRef<'a> {
             }
             MessageRef::LuldAuctionCollar(r) => Message::LuldAuctionCollar(r.to_owned_message()),
         }
+    };
+}
+
+impl<'a> ToOwnedMessage for MessageRef<'a> {
+    type Owned = Message;
+
+    #[inline]
+    fn to_owned_message(&self) -> Message {
+        message_ref_to_owned_match!(self)
     }
 }
 
-impl<'a> MessageRef<'a> {
-    #[inline]
-    pub fn to_owned(&self) -> Message {
-        self.to_owned_message()
-    }
-
-    #[inline]
-    pub fn timestamp(&self) -> u64 {
-        match self {
+macro_rules! message_ref_timestamp_match {
+    ($self:expr) => {
+        match $self {
             MessageRef::SystemEvent(r) => r.timestamp,
             MessageRef::StockDirectory(r) => r.timestamp,
             MessageRef::StockTradingAction(r) => r.timestamp,
@@ -136,11 +136,12 @@ impl<'a> MessageRef<'a> {
             MessageRef::RetailPriceImprovement(r) => r.timestamp,
             MessageRef::LuldAuctionCollar(r) => r.timestamp,
         }
-    }
+    };
+}
 
-    #[inline]
-    pub fn stock_locate(&self) -> u16 {
-        match self {
+macro_rules! message_ref_stock_locate_match {
+    ($self:expr) => {
+        match $self {
             MessageRef::SystemEvent(r) => r.stock_locate,
             MessageRef::StockDirectory(r) => r.stock_locate,
             MessageRef::StockTradingAction(r) => r.stock_locate,
@@ -163,6 +164,23 @@ impl<'a> MessageRef<'a> {
             MessageRef::RetailPriceImprovement(r) => r.stock_locate,
             MessageRef::LuldAuctionCollar(r) => r.stock_locate,
         }
+    };
+}
+
+impl<'a> MessageRef<'a> {
+    #[inline]
+    pub fn to_owned(&self) -> Message {
+        self.to_owned_message()
+    }
+
+    #[inline]
+    pub fn timestamp(&self) -> u64 {
+        message_ref_timestamp_match!(self)
+    }
+
+    #[inline]
+    pub fn stock_locate(&self) -> u16 {
+        message_ref_stock_locate_match!(self)
     }
 }
 
