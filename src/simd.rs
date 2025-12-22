@@ -211,15 +211,21 @@ pub fn is_avx512_available() -> bool {
     }
 }
 
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[target_feature(enable = "sse2")]
+fn copy_8_sse2(dst: &mut [u8; 8], src: &[u8]) {
+    unsafe {
+        let v = _mm_loadl_epi64(src.as_ptr() as *const __m128i);
+        _mm_storel_epi64(dst.as_mut_ptr() as *mut __m128i, v);
+    }
+}
+
 #[inline(always)]
 pub fn copy_8(dst: &mut [u8; 8], src: &[u8]) {
     #[cfg(all(feature = "simd", target_arch = "x86_64"))]
     {
         if is_simd_available() && src.len() >= 8 {
-            unsafe {
-                let v = _mm_loadl_epi64(src.as_ptr() as *const __m128i);
-                _mm_storel_epi64(dst.as_mut_ptr() as *mut __m128i, v);
-            }
+            unsafe { copy_8_sse2(dst, src) };
             return;
         }
     }
@@ -241,31 +247,37 @@ pub fn copy_4(dst: &mut [u8; 4], src: &[u8]) {
     dst.copy_from_slice(&src[..4]);
 }
 
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[target_feature(enable = "sse2")]
+fn find_message_boundary_sse2(data: &[u8], pattern: u8) -> Option<usize> {
+    unsafe {
+        let needle = _mm_set1_epi8(pattern as i8);
+        let mut offset = 0;
+
+        while offset + 16 <= data.len() {
+            let chunk = _mm_loadu_si128(data[offset..].as_ptr() as *const __m128i);
+            let cmp = _mm_cmpeq_epi8(chunk, needle);
+            let mask = _mm_movemask_epi8(cmp) as u32;
+
+            if mask != 0 {
+                return Some(offset + mask.trailing_zeros() as usize);
+            }
+            offset += 16;
+        }
+
+        data[offset..]
+            .iter()
+            .position(|&b| b == pattern)
+            .map(|i| i + offset)
+    }
+}
+
 #[inline(always)]
 pub fn find_message_boundary(data: &[u8], pattern: u8) -> Option<usize> {
     #[cfg(all(feature = "simd", target_arch = "x86_64"))]
     {
         if is_simd_available() && data.len() >= 16 {
-            unsafe {
-                let needle = _mm_set1_epi8(pattern as i8);
-                let mut offset = 0;
-
-                while offset + 16 <= data.len() {
-                    let chunk = _mm_loadu_si128(data[offset..].as_ptr() as *const __m128i);
-                    let cmp = _mm_cmpeq_epi8(chunk, needle);
-                    let mask = _mm_movemask_epi8(cmp) as u32;
-
-                    if mask != 0 {
-                        return Some(offset + mask.trailing_zeros() as usize);
-                    }
-                    offset += 16;
-                }
-
-                return data[offset..]
-                    .iter()
-                    .position(|&b| b == pattern)
-                    .map(|i| i + offset);
-            }
+            return unsafe { find_message_boundary_sse2(data, pattern) };
         }
     }
 
@@ -291,14 +303,20 @@ pub fn validate_message_types(data: &[u8], valid_types: &[u8; 256]) -> bool {
     data.iter().all(|&b| valid_types[b as usize] != 0)
 }
 
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[target_feature(enable = "sse2")]
+fn prefetch_data_sse2(ptr: *const u8) {
+    unsafe { _mm_prefetch(ptr as *const i8, _MM_HINT_T0) };
+}
+
 #[inline(always)]
-pub fn prefetch_data(ptr: *const u8) {
+/// # Safety
+/// The caller must ensure that `ptr` is a valid pointer for prefetching operations.
+pub unsafe fn prefetch_data(ptr: *const u8) {
     #[cfg(all(feature = "simd", target_arch = "x86_64"))]
     {
         if is_simd_available() {
-            unsafe {
-                _mm_prefetch(ptr as *const i8, _MM_HINT_T0);
-            }
+            unsafe { prefetch_data_sse2(ptr) };
         }
     }
     let _ = ptr;
@@ -388,23 +406,38 @@ pub fn prefetch_next_message(data: &[u8], offset: usize) {
     let _ = (data, offset);
 }
 
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[target_feature(enable = "sse2")]
+fn prefetch_range_sse2(data: &[u8]) {
+    unsafe {
+        let ptr = data.as_ptr();
+        let len = data.len();
+        let mut offset = 0;
+        while offset < len {
+            _mm_prefetch(ptr.add(offset) as *const i8, _MM_HINT_T0);
+            offset += 64;
+        }
+    }
+}
+
 #[inline(always)]
 pub fn prefetch_range(data: &[u8]) {
     #[cfg(all(feature = "simd", target_arch = "x86_64"))]
     {
         if is_simd_available() {
-            unsafe {
-                let ptr = data.as_ptr();
-                let len = data.len();
-                let mut offset = 0;
-                while offset < len {
-                    _mm_prefetch(ptr.add(offset) as *const i8, _MM_HINT_T0);
-                    offset += 64;
-                }
-            }
+            unsafe { prefetch_range_sse2(data) };
         }
     }
     let _ = data;
+}
+
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[target_feature(enable = "sse2")]
+fn prefetch_for_write_sse2(dst: &mut [u8], offset: usize) {
+    unsafe {
+        let ptr = dst.as_mut_ptr().add(offset);
+        _mm_prefetch(ptr as *const i8, _MM_HINT_ET0);
+    }
 }
 
 #[inline(always)]
@@ -412,13 +445,26 @@ pub fn prefetch_for_write(dst: &mut [u8], offset: usize) {
     #[cfg(all(feature = "simd", target_arch = "x86_64"))]
     {
         if is_simd_available() && offset < dst.len() {
-            unsafe {
-                let ptr = dst.as_mut_ptr().add(offset);
-                _mm_prefetch(ptr as *const i8, _MM_HINT_ET0);
-            }
+            unsafe { prefetch_for_write_sse2(dst, offset) };
         }
     }
     let _ = (dst, offset);
+}
+
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[target_feature(enable = "sse2")]
+fn memcpy_simd_sse2(dst: &mut [u8], src: &[u8], len: usize) {
+    unsafe {
+        let mut i = 0;
+        while i + 16 <= len {
+            let v = _mm_loadu_si128(src[i..].as_ptr() as *const __m128i);
+            _mm_storeu_si128(dst[i..].as_mut_ptr() as *mut __m128i, v);
+            i += 16;
+        }
+        if i < len {
+            dst[i..len].copy_from_slice(&src[i..len]);
+        }
+    }
 }
 
 #[inline(always)]
@@ -427,17 +473,7 @@ pub fn memcpy_simd(dst: &mut [u8], src: &[u8]) {
     #[cfg(all(feature = "simd", target_arch = "x86_64"))]
     {
         if is_simd_available() && len >= 16 {
-            unsafe {
-                let mut i = 0;
-                while i + 16 <= len {
-                    let v = _mm_loadu_si128(src[i..].as_ptr() as *const __m128i);
-                    _mm_storeu_si128(dst[i..].as_mut_ptr() as *mut __m128i, v);
-                    i += 16;
-                }
-                if i < len {
-                    dst[i..len].copy_from_slice(&src[i..len]);
-                }
-            }
+            unsafe { memcpy_simd_sse2(dst, src, len) };
             return;
         }
     }
@@ -457,28 +493,34 @@ fn is_avx2_available() -> bool {
     false
 }
 
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[target_feature(enable = "avx2")]
+fn memcpy_avx2_inner(dst: &mut [u8], src: &[u8], len: usize) {
+    unsafe {
+        let mut i = 0;
+        while i + 32 <= len {
+            let v = _mm256_loadu_si256(src[i..].as_ptr() as *const __m256i);
+            _mm256_storeu_si256(dst[i..].as_mut_ptr() as *mut __m256i, v);
+            i += 32;
+        }
+        while i + 16 <= len {
+            let v = _mm_loadu_si128(src[i..].as_ptr() as *const __m128i);
+            _mm_storeu_si128(dst[i..].as_mut_ptr() as *mut __m128i, v);
+            i += 16;
+        }
+        if i < len {
+            dst[i..len].copy_from_slice(&src[i..len]);
+        }
+    }
+}
+
 #[inline(always)]
 pub fn memcpy_avx2(dst: &mut [u8], src: &[u8]) {
     let len = dst.len().min(src.len());
     #[cfg(all(feature = "simd", target_arch = "x86_64"))]
     {
         if is_avx2_available() && len >= 32 {
-            unsafe {
-                let mut i = 0;
-                while i + 32 <= len {
-                    let v = _mm256_loadu_si256(src[i..].as_ptr() as *const __m256i);
-                    _mm256_storeu_si256(dst[i..].as_mut_ptr() as *mut __m256i, v);
-                    i += 32;
-                }
-                while i + 16 <= len {
-                    let v = _mm_loadu_si128(src[i..].as_ptr() as *const __m128i);
-                    _mm_storeu_si128(dst[i..].as_mut_ptr() as *mut __m128i, v);
-                    i += 16;
-                }
-                if i < len {
-                    dst[i..len].copy_from_slice(&src[i..len]);
-                }
-            }
+            unsafe { memcpy_avx2_inner(dst, src, len) };
             return;
         }
     }
@@ -486,28 +528,34 @@ pub fn memcpy_avx2(dst: &mut [u8], src: &[u8]) {
     memcpy_simd(dst, src);
 }
 
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[target_feature(enable = "avx2")]
+fn find_bytes_avx2_inner(data: &[u8], pattern: u8) -> Option<usize> {
+    unsafe {
+        let needle = _mm256_set1_epi8(pattern as i8);
+        let mut offset = 0;
+
+        while offset + 32 <= data.len() {
+            let chunk = _mm256_loadu_si256(data[offset..].as_ptr() as *const __m256i);
+            let cmp = _mm256_cmpeq_epi8(chunk, needle);
+            let mask = _mm256_movemask_epi8(cmp) as u32;
+
+            if mask != 0 {
+                return Some(offset + mask.trailing_zeros() as usize);
+            }
+            offset += 32;
+        }
+
+        find_message_boundary(&data[offset..], pattern).map(|i| i + offset)
+    }
+}
+
 #[inline(always)]
 pub fn find_bytes_avx2(data: &[u8], pattern: u8) -> Option<usize> {
     #[cfg(all(feature = "simd", target_arch = "x86_64"))]
     {
         if is_avx2_available() && data.len() >= 32 {
-            unsafe {
-                let needle = _mm256_set1_epi8(pattern as i8);
-                let mut offset = 0;
-
-                while offset + 32 <= data.len() {
-                    let chunk = _mm256_loadu_si256(data[offset..].as_ptr() as *const __m256i);
-                    let cmp = _mm256_cmpeq_epi8(chunk, needle);
-                    let mask = _mm256_movemask_epi8(cmp) as u32;
-
-                    if mask != 0 {
-                        return Some(offset + mask.trailing_zeros() as usize);
-                    }
-                    offset += 32;
-                }
-
-                return find_message_boundary(&data[offset..], pattern).map(|i| i + offset);
-            }
+            return unsafe { find_bytes_avx2_inner(data, pattern) };
         }
     }
 
@@ -515,26 +563,32 @@ pub fn find_bytes_avx2(data: &[u8], pattern: u8) -> Option<usize> {
 }
 
 #[cfg(all(feature = "avx512", target_arch = "x86_64"))]
+#[target_feature(enable = "avx512f")]
+fn memcpy_avx512_inner(dst: &mut [u8], src: &[u8], len: usize) {
+    unsafe {
+        let mut i = 0;
+        while i + 64 <= len {
+            let v = _mm512_loadu_si512(src[i..].as_ptr() as *const __m512i);
+            _mm512_storeu_si512(dst[i..].as_mut_ptr() as *mut __m512i, v);
+            i += 64;
+        }
+        while i + 32 <= len {
+            let v = _mm256_loadu_si256(src[i..].as_ptr() as *const __m256i);
+            _mm256_storeu_si256(dst[i..].as_mut_ptr() as *mut __m256i, v);
+            i += 32;
+        }
+        if i < len {
+            dst[i..len].copy_from_slice(&src[i..len]);
+        }
+    }
+}
+
+#[cfg(all(feature = "avx512", target_arch = "x86_64"))]
 #[inline(always)]
 pub fn memcpy_avx512(dst: &mut [u8], src: &[u8]) {
     let len = dst.len().min(src.len());
     if is_avx512_available() && len >= 64 {
-        unsafe {
-            let mut i = 0;
-            while i + 64 <= len {
-                let v = _mm512_loadu_si512(src[i..].as_ptr() as *const __m512i);
-                _mm512_storeu_si512(dst[i..].as_mut_ptr() as *mut __m512i, v);
-                i += 64;
-            }
-            while i + 32 <= len {
-                let v = _mm256_loadu_si256(src[i..].as_ptr() as *const __m256i);
-                _mm256_storeu_si256(dst[i..].as_mut_ptr() as *mut __m256i, v);
-                i += 32;
-            }
-            if i < len {
-                dst[i..len].copy_from_slice(&src[i..len]);
-            }
-        }
+        unsafe { memcpy_avx512_inner(dst, src, len) };
         return;
     }
     memcpy_avx2(dst, src);
@@ -547,25 +601,31 @@ pub fn memcpy_avx512(dst: &mut [u8], src: &[u8]) {
 }
 
 #[cfg(all(feature = "avx512", target_arch = "x86_64"))]
+#[target_feature(enable = "avx512bw")]
+fn find_bytes_avx512_inner(data: &[u8], pattern: u8) -> Option<usize> {
+    unsafe {
+        let needle = _mm512_set1_epi8(pattern as i8);
+        let mut offset = 0;
+
+        while offset + 64 <= data.len() {
+            let chunk = _mm512_loadu_si512(data[offset..].as_ptr() as *const __m512i);
+            let mask = _mm512_cmpeq_epi8_mask(chunk, needle);
+
+            if mask != 0 {
+                return Some(offset + mask.trailing_zeros() as usize);
+            }
+            offset += 64;
+        }
+
+        find_bytes_avx2(&data[offset..], pattern).map(|i| i + offset)
+    }
+}
+
+#[cfg(all(feature = "avx512", target_arch = "x86_64"))]
 #[inline(always)]
 pub fn find_bytes_avx512(data: &[u8], pattern: u8) -> Option<usize> {
     if is_avx512_available() && data.len() >= 64 {
-        unsafe {
-            let needle = _mm512_set1_epi8(pattern as i8);
-            let mut offset = 0;
-
-            while offset + 64 <= data.len() {
-                let chunk = _mm512_loadu_si512(data[offset..].as_ptr() as *const __m512i);
-                let mask = _mm512_cmpeq_epi8_mask(chunk, needle);
-
-                if mask != 0 {
-                    return Some(offset + mask.trailing_zeros() as usize);
-                }
-                offset += 64;
-            }
-
-            return find_bytes_avx2(&data[offset..], pattern).map(|i| i + offset);
-        }
+        return unsafe { find_bytes_avx512_inner(data, pattern) };
     }
 
     find_bytes_avx2(data, pattern)
@@ -711,6 +771,21 @@ pub fn scan_message_lengths_simd(data: &[u8], max_messages: usize) -> Vec<(usize
 }
 
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[target_feature(enable = "sse2")]
+unsafe fn memcpy_nontemporal_sse2(dst: *mut u8, src: *const u8, len: usize) {
+    let mut i = 0;
+    while i + 16 <= len {
+        let v = _mm_loadu_si128(src.add(i) as *const __m128i);
+        _mm_stream_si128(dst.add(i) as *mut __m128i, v);
+        i += 16;
+    }
+    _mm_sfence();
+    if i < len {
+        std::ptr::copy_nonoverlapping(src.add(i), dst.add(i), len - i);
+    }
+}
+
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
 #[inline(always)]
 /// # Safety
 ///
@@ -720,16 +795,7 @@ pub fn scan_message_lengths_simd(data: &[u8], max_messages: usize) -> Vec<(usize
 /// - the regions do not overlap
 pub unsafe fn memcpy_nontemporal(dst: *mut u8, src: *const u8, len: usize) {
     if is_simd_available() && len >= 64 {
-        let mut i = 0;
-        while i + 16 <= len {
-            let v = _mm_loadu_si128(src.add(i) as *const __m128i);
-            _mm_stream_si128(dst.add(i) as *mut __m128i, v);
-            i += 16;
-        }
-        _mm_sfence();
-        if i < len {
-            std::ptr::copy_nonoverlapping(src.add(i), dst.add(i), len - i);
-        }
+        memcpy_nontemporal_sse2(dst, src, len);
         return;
     }
     std::ptr::copy_nonoverlapping(src, dst, len);
@@ -2214,7 +2280,7 @@ mod tests {
     #[test]
     fn test_prefetch_safety() {
         let mut data = vec![42; 100];
-        prefetch_data(data.as_ptr());
+        unsafe { prefetch_data(data.as_ptr()) };
         prefetch_next_message(&data, 50);
         prefetch_range(&data);
         prefetch_for_write(data.as_mut_slice(), 50);
