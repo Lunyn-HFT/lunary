@@ -9,9 +9,7 @@ use lunary::bench::{
 };
 
 fn main() -> Result<()> {
-    let Some(cli_args) = parse_cli_args() else {
-        std::process::exit(2);
-    };
+    let cli_args = parse_cli_args().unwrap();
 
     let path = cli_args.path;
     let mode = cli_args.mode;

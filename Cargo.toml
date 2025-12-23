@@ -1,6 +1,6 @@
 [package]
 name = "lunary"
-version = "0.2.1"
+version = "0.2.2"
 authors = ["Lunyn <contact@lunyn.com>"]
 edition = "2024"
 license = "AGPL-3.0-or-later"
@@ -29,6 +29,7 @@ crossbeam-deque = "0.8"
 core_affinity = { version = "0.8", optional = true }
 tempfile = "3.23.0"
 zerocopy = { version = "0.8", features = ["derive"] }
+clap = "4.0"
 
 [target.'cfg(not(target_env = "msvc"))'.dependencies]
 mimalloc = { version = "0.1", optional = true }

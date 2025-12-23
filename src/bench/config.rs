@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use crate::Config;
+use clap::{Arg, Command};
 
 #[derive(Clone)]
 pub struct BenchConfig {
@@ -37,84 +38,140 @@ pub struct CliArgs {
 }
 
 pub fn parse_cli_args() -> Option<CliArgs> {
-    let args: Vec<String> = std::env::args().collect();
+    let matches = Command::new("itch-bench")
+        .version(env!("CARGO_PKG_VERSION"))
+        .about("High-performance ITCH parser for NASDAQ data")
+        .arg(
+            Arg::new("file")
+                .help("Path to the ITCH file to parse")
+                .required(true)
+                .index(1),
+        )
+        .arg(
+            Arg::new("mode")
+                .help("Parsing mode")
+                .long_help(
+                    "Basic Modes:\n\
+                     simple - Basic single-threaded parsing\n\
+                     batch - Batch processing\n\
+                     adaptive - Adaptive batching\n\
+                     parallel - Parallel processing\n\
+                     worksteal - Work-stealing parallel\n\
+                     mmap - Memory-mapped parsing\n\
+                     decode - Message decoding\n\
+                     zerocopy - Zero-copy parsing\n\
+                     spsc - Single-producer single-consumer\n\
+                     simd - SIMD-accelerated parsing\n\
+                     \n\
+                     Advanced Modes:\n\
+                     zerocopy-ref - Zero-copy reference parsing with MessageRef\n\
+                     adaptive-all - Compare all adaptive strategies\n\
+                     worker-stats - Parallel parsing with per-worker stats\n\
+                     simd-validate - SIMD message validation benchmark\n\
+                     latency - Latency distribution analysis\n\
+                     realworld - Real-world simulation benchmark\n\
+                     diagnostics - Full SIMD/cache diagnostics\n\
+                     feature-cmp - Per-feature comparison (zerocopy vs owned, SIMD vs scalar)\n\
+                     fuzzing - Fuzzing and error injection test\n\
+                     all - Run all benchmarks",
+                )
+                .value_parser([
+                    "simple",
+                    "batch",
+                    "adaptive",
+                    "parallel",
+                    "worksteal",
+                    "mmap",
+                    "decode",
+                    "zerocopy",
+                    "spsc",
+                    "simd",
+                    "zerocopy-ref",
+                    "adaptive-all",
+                    "worker-stats",
+                    "simd-validate",
+                    "latency",
+                    "realworld",
+                    "diagnostics",
+                    "feature-cmp",
+                    "fuzzing",
+                    "all",
+                ])
+                .default_value("all")
+                .index(2),
+        )
+        .arg(
+            Arg::new("max_size_mb")
+                .help("Maximum file/buffer size in MB")
+                .value_parser(clap::value_parser!(usize))
+                .default_value("512")
+                .index(3),
+        )
+        .arg(
+            Arg::new("iterations")
+                .help("Run each benchmark N times")
+                .long("iterations")
+                .short('i')
+                .value_parser(clap::value_parser!(usize))
+                .default_value("1"),
+        )
+        .arg(
+            Arg::new("warmup")
+                .help("Run N warmup iterations before measurement")
+                .long("warmup")
+                .short('w')
+                .value_parser(clap::value_parser!(usize))
+                .default_value("0"),
+        )
+        .arg(
+            Arg::new("json")
+                .help("Output results in JSON format")
+                .long("json")
+                .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("csv")
+                .help("Output results in CSV format")
+                .long("csv")
+                .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("no_validate")
+                .help("Disable validation")
+                .long("no-validate")
+                .action(clap::ArgAction::SetTrue),
+        )
+        .get_matches();
 
-    let path = args.get(1).map(PathBuf::from)?;
+    let path = PathBuf::from(matches.get_one::<String>("file").unwrap());
+    let mode = matches.get_one::<String>("mode").unwrap().clone();
+    let max_size_mb = *matches.get_one::<usize>("max_size_mb").unwrap();
+    let iterations = *matches.get_one::<usize>("iterations").unwrap();
+    let warmup_iterations = *matches.get_one::<usize>("warmup").unwrap();
+    let output_format = if matches.get_flag("json") {
+        OutputFormat::Json
+    } else if matches.get_flag("csv") {
+        OutputFormat::Csv
+    } else {
+        OutputFormat::Human
+    };
+    let validate = !matches.get_flag("no_validate");
 
-    if path.as_os_str() == "--help" || path.as_os_str() == "-h" {
-        print_usage();
-        return None;
-    }
-
-    let mode = args
-        .get(2)
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| "all".to_string());
-
-    let max_size_mb: usize = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(512);
     let lunary_config = Config::from_size_mb(max_size_mb);
 
-    let mut bench_config = BenchConfig {
+    let bench_config = BenchConfig {
+        iterations,
+        warmup_iterations,
+        output_format,
+        validate,
         max_buffer_size: lunary_config.max_buffer_size,
-        ..Default::default()
     };
-
-    let mut i = 4;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--json" => bench_config.output_format = OutputFormat::Json,
-            "--csv" => bench_config.output_format = OutputFormat::Csv,
-            "--iterations" => {
-                if let Some(n) = args.get(i + 1).and_then(|s| s.parse().ok()) {
-                    bench_config.iterations = n;
-                    i += 1;
-                }
-            }
-            "--warmup" => {
-                if let Some(n) = args.get(i + 1).and_then(|s| s.parse().ok()) {
-                    bench_config.warmup_iterations = n;
-                    i += 1;
-                }
-            }
-            "--no-validate" => bench_config.validate = false,
-            "--validate" => bench_config.validate = true,
-            _ => {}
-        }
-        i += 1;
-    }
 
     Some(CliArgs {
         path,
         mode,
         config: bench_config,
     })
-}
-
-pub fn print_usage() {
-    eprintln!("Usage: itch-bench <path-to-itch-file> [mode] [max-size-mb] [options]");
-    eprintln!();
-    eprintln!("Basic Modes:");
-    eprintln!("  simple, batch, adaptive, parallel, worksteal, mmap, decode, zerocopy, spsc, simd");
-    eprintln!();
-    eprintln!("Advanced Modes:");
-    eprintln!("  zerocopy-ref   - Zero-copy reference parsing with MessageRef");
-    eprintln!("  adaptive-all   - Compare all adaptive strategies");
-    eprintln!("  worker-stats   - Parallel parsing with per-worker stats");
-    eprintln!("  simd-validate  - SIMD message validation benchmark");
-    eprintln!("  latency        - Latency distribution analysis");
-    eprintln!("  realworld      - Real-world simulation benchmark");
-    eprintln!("  diagnostics    - Full SIMD/cache diagnostics");
-    eprintln!("  feature-cmp    - Per-feature comparison (zerocopy vs owned, SIMD vs scalar)");
-    eprintln!("  fuzzing        - Fuzzing and error injection test");
-    eprintln!();
-    eprintln!("  all (default)  - Run all benchmarks");
-    eprintln!();
-    eprintln!("Options:");
-    eprintln!("  max-size-mb    - Maximum file/buffer size in MB (default: 512)");
-    eprintln!("  --iterations N - Run each benchmark N times (default: 1)");
-    eprintln!("  --warmup N     - Run N warmup iterations before measurement (default: 0)");
-    eprintln!("  --json         - Output results in JSON format");
-    eprintln!("  --csv          - Output results in CSV format");
 }
 
 pub fn print_config_summary(data_len: usize, max_size_mb: usize, mmap_len: usize) {

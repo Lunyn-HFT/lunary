@@ -21,7 +21,7 @@ use crate::AdaptiveBatchConfig;
 
 pub fn run_mode(mode: &str, path: &PathBuf, data: &[u8], bench_config: &BenchConfig) -> Result<()> {
     match mode {
-        "simple" => single::run_simple(data),
+        "simple" => single::run_simple(data, bench_config),
         "batch" => single::run_batch(data),
         "adaptive" => adaptive::run_adaptive(data),
         "parallel" => parallel::run_parallel(data),
@@ -122,12 +122,16 @@ pub fn run_all_benchmarks(_path: &PathBuf, data: &[u8], config: &BenchConfig) ->
         eprintln!("✓");
     }
 
-    print_results(&results, config);
+    print_results(&results, config, data.len() as f64 / (1024.0 * 1024.0))?;
 
     Ok(())
 }
 
-fn print_results(results: &[(&str, u64, f64, f64, f64)], config: &BenchConfig) {
+fn print_results(
+    results: &[(&str, u64, f64, f64, f64)],
+    config: &BenchConfig,
+    file_size_mb: f64,
+) -> std::io::Result<()> {
     match config.output_format {
         OutputFormat::Human => {
             println!("\n=== Summary ===");
@@ -193,34 +197,50 @@ fn print_results(results: &[(&str, u64, f64, f64, f64)], config: &BenchConfig) {
                     }
                 }
             }
+            Ok(())
         }
         OutputFormat::Json => {
-            println!("{{");
-            println!(
-                "  \"file_size_mb\": {:.2},",
-                results.first().map(|_| 0.0).unwrap_or(0.0)
-            );
-            println!("  \"iterations\": {},", config.iterations);
-            println!("  \"warmup_iterations\": {},", config.warmup_iterations);
-            println!("  \"results\": [");
+            let mut file = std::fs::OpenOptions::new()
+                .append(true)
+                .create(true)
+                .open("results.json")?;
+            writeln!(file, "{{")?;
+            writeln!(file, "  \"file_size_mb\": {:.2},", file_size_mb)?;
+            writeln!(file, "  \"iterations\": {},", config.iterations)?;
+            writeln!(
+                file,
+                "  \"warmup_iterations\": {},",
+                config.warmup_iterations
+            )?;
+            writeln!(file, "  \"results\": [")?;
             for (i, (name, messages, elapsed_ms, mps, variance)) in results.iter().enumerate() {
                 let comma = if i < results.len() - 1 { "," } else { "" };
-                println!(
+                writeln!(
+                    file,
                     "    {{\"name\": \"{}\", \"messages\": {}, \"time_ms\": {:.2}, \"mps\": {:.2}, \"variance\": {:.2}}}{}",
                     name, messages, elapsed_ms, mps, variance, comma
-                );
+                )?;
             }
-            println!("  ]");
-            println!("}}");
+            writeln!(file, "  ]")?;
+            writeln!(file, "}}")?;
+            Ok(())
         }
         OutputFormat::Csv => {
-            println!("name,messages,time_ms,mps,variance");
+            let mut file = std::fs::OpenOptions::new()
+                .append(true)
+                .create(true)
+                .open("results.csv")?;
+            if file.metadata()?.len() == 0 {
+                writeln!(file, "name,messages,time_ms,mps,variance")?;
+            }
             for (name, messages, elapsed_ms, mps, variance) in results {
-                println!(
+                writeln!(
+                    file,
                     "{},{},{:.2},{:.2},{:.2}",
                     name, messages, elapsed_ms, mps, variance
-                );
+                )?;
             }
+            Ok(())
         }
     }
 }

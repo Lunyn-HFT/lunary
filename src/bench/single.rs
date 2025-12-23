@@ -1,9 +1,11 @@
 use anyhow::Result;
+use std::io::Write;
 use std::time::Instant;
 
 use crate::{BatchProcessor, Message, Parser, ZeroCopyParser};
 
 use super::utils::calculate_throughput;
+use super::{BenchConfig, OutputFormat};
 
 pub fn bench_simple(data: &[u8]) -> Result<(u64, f64, f64)> {
     let mut parser = Parser::default();
@@ -52,15 +54,44 @@ pub fn bench_zerocopy_ref(data: &[u8]) -> Result<(u64, f64, f64)> {
     Ok((count, elapsed_ms, mps))
 }
 
-pub fn run_simple(data: &[u8]) -> Result<()> {
+pub fn run_simple(data: &[u8], config: &BenchConfig) -> Result<()> {
     let (messages, elapsed_ms, mps) = bench_simple(data)?;
-    println!(
-        "[simple] Parsed {} messages ({} bytes) in {:.2}ms => {:.2} M msg/sec",
-        messages,
-        data.len(),
-        elapsed_ms,
-        mps
-    );
+    if config.output_format != OutputFormat::Human {
+        let filename = match config.output_format {
+            OutputFormat::Json => "results.json",
+            OutputFormat::Csv => "results.csv",
+            _ => unreachable!(),
+        };
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(filename)?;
+        match config.output_format {
+            OutputFormat::Json => {
+                writeln!(file, "{{")?;
+                writeln!(file, "  \"name\": \"simple\",")?;
+                writeln!(file, "  \"messages\": {},", messages)?;
+                writeln!(file, "  \"time_ms\": {:.2},", elapsed_ms)?;
+                writeln!(file, "  \"mps\": {:.2}", mps)?;
+                writeln!(file, "}}")?;
+            }
+            OutputFormat::Csv => {
+                if file.metadata()?.len() == 0 {
+                    writeln!(file, "name,messages,time_ms,mps,variance")?;
+                }
+                writeln!(file, "simple,{},{:.2},{:.2},0.0", messages, elapsed_ms, mps)?;
+            }
+            _ => {}
+        }
+    } else {
+        println!(
+            "[simple] Parsed {} messages ({} bytes) in {:.2}ms => {:.2} M msg/sec",
+            messages,
+            data.len(),
+            elapsed_ms,
+            mps
+        );
+    }
     Ok(())
 }
 

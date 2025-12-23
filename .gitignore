@@ -31,6 +31,8 @@ tmp/
 # OS files
 Thumbs.db
 *.exe
+*.json
+*.csv
 
 # Environment
 .env
