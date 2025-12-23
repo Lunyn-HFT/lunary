@@ -306,13 +306,8 @@ impl<'a> ZeroCopyParser<'a> {
     }
 
     #[inline]
-    pub fn parse_all(&mut self) -> Vec<ZeroCopyMessage<'a>> {
-        let estimated = self.remaining() / 32;
-        let mut messages = Vec::with_capacity(estimated);
-        while let Some(msg) = self.parse_next() {
-            messages.push(msg);
-        }
-        messages
+    pub fn parse_all(&mut self) -> impl Iterator<Item = ZeroCopyMessage<'a>> + '_ {
+        std::iter::from_fn(move || self.parse_next())
     }
 
     #[inline]

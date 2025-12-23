@@ -39,7 +39,7 @@ impl MmapParser {
 
     pub fn parse_all(&self) -> Vec<ZeroCopyMessage<'_>> {
         let mut parser = self.parser();
-        parser.parse_all()
+        parser.parse_all().collect()
     }
 
     pub fn count_messages(&self) -> usize {
@@ -97,7 +97,7 @@ impl ChunkedMmapParser {
         let end = (start + self.chunk_size).min(self.mmap.len());
         let chunk = &self.mmap[start..end];
         let mut parser = ZeroCopyParser::new(chunk);
-        Ok(parser.parse_all())
+        Ok(parser.parse_all().collect())
     }
 }
 

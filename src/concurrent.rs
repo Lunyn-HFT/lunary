@@ -1,4 +1,5 @@
 use crossbeam_channel::{Receiver, Sender, bounded};
+use parking_lot::{Condvar, Mutex};
 use std::sync::Arc;
 #[cfg(feature = "pinning")]
 use std::sync::OnceLock;
@@ -262,6 +263,7 @@ pub struct SpscParser {
     shutdown: Arc<AtomicBool>,
     stats: Arc<AtomicStats>,
     start_time: Instant,
+    has_data: Arc<(Mutex<bool>, Condvar)>,
 }
 
 impl SpscParser {
@@ -270,11 +272,13 @@ impl SpscParser {
         let output_queue: Arc<SpscQueue<Vec<Message>>> = Arc::new(SpscQueue::new());
         let shutdown = Arc::new(AtomicBool::new(false));
         let stats = Arc::new(AtomicStats::new());
+        let has_data = Arc::new((Mutex::new(false), Condvar::new()));
 
         let input_q = Arc::clone(&input_queue);
         let output_q = Arc::clone(&output_queue);
         let shutdown_flag = Arc::clone(&shutdown);
         let stats_ref = Arc::clone(&stats);
+        let has_data_ref = Arc::clone(&has_data);
 
         let worker = thread::spawn(move || {
             pin_current_thread();
@@ -294,14 +298,29 @@ impl SpscParser {
                             }
                         };
                         match parser.parse_all(data_slice) {
-                            Ok(messages) => {
-                                stats_ref.add_messages(messages.len() as u64);
-                                stats_ref.add_bytes(data_len as u64);
-                                let _ = output_q.push(messages);
+                            Ok(iter) => {
+                                let messages: Result<Vec<Message>> = iter.collect();
+                                match messages {
+                                    Ok(msgs) => {
+                                        stats_ref.add_messages(msgs.len() as u64);
+                                        stats_ref.add_bytes(data_len as u64);
+                                        let _ = output_q.push(msgs);
+                                        *has_data_ref.0.lock() = true;
+                                        has_data_ref.1.notify_one();
+                                    }
+                                    Err(_) => {
+                                        stats_ref.add_error();
+                                        let _ = output_q.push(Vec::new());
+                                        *has_data_ref.0.lock() = true;
+                                        has_data_ref.1.notify_one();
+                                    }
+                                }
                             }
                             Err(_) => {
                                 stats_ref.add_error();
                                 let _ = output_q.push(Vec::new());
+                                *has_data_ref.0.lock() = true;
+                                has_data_ref.1.notify_one();
                             }
                         }
                         parser.reset();
@@ -320,6 +339,7 @@ impl SpscParser {
             shutdown,
             stats,
             start_time: Instant::now(),
+            has_data,
         }
     }
 
@@ -369,7 +389,14 @@ impl ConcurrentParser for SpscParser {
             if self.shutdown.load(Ordering::Relaxed) {
                 return None;
             }
-            std::hint::spin_loop();
+            let (lock, cvar) = &*self.has_data;
+            let mut has_data = lock.lock();
+            if *has_data {
+                *has_data = false;
+            } else {
+                cvar.wait(&mut has_data);
+                *has_data = false;
+            }
         }
     }
 
@@ -473,14 +500,27 @@ impl ParallelParser {
                                 WorkUnit::Owned(data_vec) => {
                                     let data_len = data_vec.len();
                                     match parser.parse_all(&data_vec) {
-                                        Ok(messages) => {
-                                            let msg_count = messages.len() as u64;
-                                            msg_counter.fetch_add(msg_count, Ordering::Relaxed);
-                                            byte_counter
-                                                .fetch_add(data_len as u64, Ordering::Relaxed);
-                                            stats[worker_id]
-                                                .record_batch(msg_count, data_len as u64);
-                                            let _ = tx.send(messages);
+                                        Ok(iter) => {
+                                            let messages: Result<Vec<Message>> = iter.collect();
+                                            match messages {
+                                                Ok(msgs) => {
+                                                    let msg_count = msgs.len() as u64;
+                                                    msg_counter
+                                                        .fetch_add(msg_count, Ordering::Relaxed);
+                                                    byte_counter.fetch_add(
+                                                        data_len as u64,
+                                                        Ordering::Relaxed,
+                                                    );
+                                                    stats[worker_id]
+                                                        .record_batch(msg_count, data_len as u64);
+                                                    let _ = tx.send(msgs);
+                                                }
+                                                Err(_) => {
+                                                    err_counter.fetch_add(1, Ordering::Relaxed);
+                                                    stats[worker_id].record_error();
+                                                    let _ = tx.send(Vec::new());
+                                                }
+                                            }
                                         }
                                         Err(_) => {
                                             err_counter.fetch_add(1, Ordering::Relaxed);
@@ -493,14 +533,27 @@ impl ParallelParser {
                                     let slice = &arc[start..end];
                                     let data_len = slice.len();
                                     match parser.parse_all(slice) {
-                                        Ok(messages) => {
-                                            let msg_count = messages.len() as u64;
-                                            msg_counter.fetch_add(msg_count, Ordering::Relaxed);
-                                            byte_counter
-                                                .fetch_add(data_len as u64, Ordering::Relaxed);
-                                            stats[worker_id]
-                                                .record_batch(msg_count, data_len as u64);
-                                            let _ = tx.send(messages);
+                                        Ok(iter) => {
+                                            let messages: Result<Vec<Message>> = iter.collect();
+                                            match messages {
+                                                Ok(msgs) => {
+                                                    let msg_count = msgs.len() as u64;
+                                                    msg_counter
+                                                        .fetch_add(msg_count, Ordering::Relaxed);
+                                                    byte_counter.fetch_add(
+                                                        data_len as u64,
+                                                        Ordering::Relaxed,
+                                                    );
+                                                    stats[worker_id]
+                                                        .record_batch(msg_count, data_len as u64);
+                                                    let _ = tx.send(msgs);
+                                                }
+                                                Err(_) => {
+                                                    err_counter.fetch_add(1, Ordering::Relaxed);
+                                                    stats[worker_id].record_error();
+                                                    let _ = tx.send(Vec::new());
+                                                }
+                                            }
                                         }
                                         Err(_) => {
                                             err_counter.fetch_add(1, Ordering::Relaxed);
@@ -1684,12 +1737,23 @@ impl WorkStealingParser {
                                 WorkUnit::Owned(data_vec) => {
                                     let data_len = data_vec.len();
                                     match parser.parse_all(&data_vec) {
-                                        Ok(messages) => {
-                                            let msg_count = messages.len() as u64;
-                                            stats_ref.add_messages(msg_count);
-                                            stats_ref.add_bytes(data_len as u64);
-                                            ws[worker_id].record_batch(msg_count, data_len as u64);
-                                            let _ = tx.send(messages);
+                                        Ok(iter) => {
+                                            let messages: Result<Vec<Message>> = iter.collect();
+                                            match messages {
+                                                Ok(msgs) => {
+                                                    let msg_count = msgs.len() as u64;
+                                                    stats_ref.add_messages(msg_count);
+                                                    stats_ref.add_bytes(data_len as u64);
+                                                    ws[worker_id]
+                                                        .record_batch(msg_count, data_len as u64);
+                                                    let _ = tx.send(msgs);
+                                                }
+                                                Err(_) => {
+                                                    stats_ref.add_error();
+                                                    ws[worker_id].record_error();
+                                                    let _ = tx.send(Vec::new());
+                                                }
+                                            }
                                         }
                                         Err(_) => {
                                             stats_ref.add_error();
@@ -1702,12 +1766,23 @@ impl WorkStealingParser {
                                     let slice = &arc[start..end];
                                     let data_len = slice.len();
                                     match parser.parse_all(slice) {
-                                        Ok(messages) => {
-                                            let msg_count = messages.len() as u64;
-                                            stats_ref.add_messages(msg_count);
-                                            stats_ref.add_bytes(data_len as u64);
-                                            ws[worker_id].record_batch(msg_count, data_len as u64);
-                                            let _ = tx.send(messages);
+                                        Ok(iter) => {
+                                            let messages: Result<Vec<Message>> = iter.collect();
+                                            match messages {
+                                                Ok(msgs) => {
+                                                    let msg_count = msgs.len() as u64;
+                                                    stats_ref.add_messages(msg_count);
+                                                    stats_ref.add_bytes(data_len as u64);
+                                                    ws[worker_id]
+                                                        .record_batch(msg_count, data_len as u64);
+                                                    let _ = tx.send(msgs);
+                                                }
+                                                Err(_) => {
+                                                    stats_ref.add_error();
+                                                    ws[worker_id].record_error();
+                                                    let _ = tx.send(Vec::new());
+                                                }
+                                            }
                                         }
                                         Err(_) => {
                                             stats_ref.add_error();
