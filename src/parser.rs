@@ -271,14 +271,13 @@ impl Parser {
         })
     }
 
-    pub fn parse_all(&mut self, buf: &[u8]) -> Result<Vec<Message>> {
+    pub fn parse_all(&mut self, buf: &[u8]) -> Result<impl Iterator<Item = Result<Message>> + '_> {
         self.feed_data(buf)?;
-        let mut out = Vec::new();
-
-        while let Some(m) = self.parse_next()? {
-            out.push(m);
-        }
-        Ok(out)
+        Ok(std::iter::from_fn(move || match self.parse_next() {
+            Ok(Some(msg)) => Some(Ok(msg)),
+            Ok(None) => None,
+            Err(e) => Some(Err(e)),
+        }))
     }
 
     dispatch_fn!(dispatch_system_event, SystemEvent, parse_system_event);
@@ -405,7 +404,7 @@ impl Parser {
                 actual: data.len(),
             });
         }
-        let value = unsafe { *data.get_unchecked(*pos) };
+        let value = data[*pos];
         *pos += 1;
         Ok(value)
     }

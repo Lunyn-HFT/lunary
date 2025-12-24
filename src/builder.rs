@@ -2,9 +2,10 @@ use crate::concurrent::{
     AdaptiveBatchConfig, AdaptiveBatchProcessor, AdaptiveStrategy, BatchProcessor, ParallelParser,
     SpscParser, WorkStealingParser,
 };
-use crate::mmap::MmapParser;
+use crate::mmap::{MmapParser, MmapParserShared};
 use crate::parser::Parser;
 use crate::zerocopy::ZeroCopyParser;
+use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ParserMode {
@@ -84,13 +85,19 @@ impl ParserBuilder {
 
     pub fn parallel(mut self, workers: usize) -> Self {
         self.config.mode = ParserMode::Parallel;
-        self.config.num_workers = workers.max(1);
+        let max_workers = std::thread::available_parallelism()
+            .map(|p| p.get() * 2)
+            .unwrap_or(16);
+        self.config.num_workers = workers.clamp(1, max_workers);
         self
     }
 
     pub fn work_stealing(mut self, workers: usize) -> Self {
         self.config.mode = ParserMode::WorkStealing;
-        self.config.num_workers = workers.max(1);
+        let max_workers = std::thread::available_parallelism()
+            .map(|p| p.get() * 2)
+            .unwrap_or(16);
+        self.config.num_workers = workers.clamp(1, max_workers);
         self
     }
 
@@ -181,6 +188,13 @@ impl ParserBuilder {
 
     pub fn build_mmap(&self, path: &std::path::Path) -> crate::Result<MmapParser> {
         Ok(MmapParser::open(path)?)
+    }
+
+    pub fn build_mmap_shared(
+        &self,
+        path: &std::path::Path,
+    ) -> crate::Result<Arc<MmapParserShared>> {
+        Ok(Arc::new(MmapParserShared::open(path)?))
     }
 }
 

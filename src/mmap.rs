@@ -2,6 +2,7 @@ use memmap2::Mmap;
 use std::fs::File;
 use std::io;
 use std::path::Path;
+use std::sync::Arc;
 
 use crate::error::Result;
 use crate::zerocopy::{ZeroCopyMessage, ZeroCopyParser};
@@ -39,7 +40,11 @@ impl MmapParser {
 
     pub fn parse_all(&self) -> Vec<ZeroCopyMessage<'_>> {
         let mut parser = self.parser();
-        parser.parse_all()
+        parser.parse_all().collect()
+    }
+
+    pub fn into_shared(self) -> MmapParserShared {
+        MmapParserShared::from(self)
     }
 
     pub fn count_messages(&self) -> usize {
@@ -97,7 +102,50 @@ impl ChunkedMmapParser {
         let end = (start + self.chunk_size).min(self.mmap.len());
         let chunk = &self.mmap[start..end];
         let mut parser = ZeroCopyParser::new(chunk);
-        Ok(parser.parse_all())
+        Ok(parser.parse_all().collect())
+    }
+}
+
+pub struct MmapParserShared {
+    mmap: Arc<Mmap>,
+}
+
+impl MmapParserShared {
+    pub fn open<P: AsRef<Path>>(path: P) -> io::Result<Self> {
+        let file = File::open(path)?;
+        let mmap = unsafe { Mmap::map(&file)? };
+        Ok(Self {
+            mmap: Arc::new(mmap),
+        })
+    }
+
+    pub fn data(&self) -> &[u8] {
+        self.mmap.as_ref()
+    }
+
+    pub fn len(&self) -> usize {
+        self.mmap.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.mmap.is_empty()
+    }
+
+    pub fn parser(&self) -> ZeroCopyParser<'_> {
+        ZeroCopyParser::new(self.mmap.as_ref())
+    }
+
+    pub fn parse_all(&self) -> Vec<ZeroCopyMessage<'_>> {
+        let mut parser = self.parser();
+        parser.parse_all().collect()
+    }
+}
+
+impl From<MmapParser> for MmapParserShared {
+    fn from(p: MmapParser) -> Self {
+        Self {
+            mmap: Arc::new(p.mmap),
+        }
     }
 }
 

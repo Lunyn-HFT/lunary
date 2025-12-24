@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use crate::Config;
+use anyhow;
 use clap::{Arg, Command};
 
 #[derive(Clone)]
@@ -37,7 +38,7 @@ pub struct CliArgs {
     pub config: BenchConfig,
 }
 
-pub fn parse_cli_args() -> Option<CliArgs> {
+pub fn parse_cli_args() -> anyhow::Result<CliArgs> {
     let matches = Command::new("itch-bench")
         .version(env!("CARGO_PKG_VERSION"))
         .about("High-performance ITCH parser for NASDAQ data")
@@ -141,13 +142,27 @@ pub fn parse_cli_args() -> Option<CliArgs> {
                 .long("no-validate")
                 .action(clap::ArgAction::SetTrue),
         )
-        .get_matches();
+        .try_get_matches()
+        .map_err(anyhow::Error::from)?;
 
-    let path = PathBuf::from(matches.get_one::<String>("file").unwrap());
-    let mode = matches.get_one::<String>("mode").unwrap().clone();
-    let max_size_mb = *matches.get_one::<usize>("max_size_mb").unwrap();
-    let iterations = *matches.get_one::<usize>("iterations").unwrap();
-    let warmup_iterations = *matches.get_one::<usize>("warmup").unwrap();
+    let path = PathBuf::from(
+        matches
+            .get_one::<String>("file")
+            .ok_or(anyhow::anyhow!("file argument missing"))?,
+    );
+    let mode = matches
+        .get_one::<String>("mode")
+        .ok_or(anyhow::anyhow!("mode argument missing"))?
+        .clone();
+    let max_size_mb = *matches
+        .get_one::<usize>("max_size_mb")
+        .ok_or(anyhow::anyhow!("max_size_mb argument missing"))?;
+    let iterations = *matches
+        .get_one::<usize>("iterations")
+        .ok_or(anyhow::anyhow!("iterations argument missing"))?;
+    let warmup_iterations = *matches
+        .get_one::<usize>("warmup")
+        .ok_or(anyhow::anyhow!("warmup argument missing"))?;
     let output_format = if matches.get_flag("json") {
         OutputFormat::Json
     } else if matches.get_flag("csv") {
@@ -167,7 +182,7 @@ pub fn parse_cli_args() -> Option<CliArgs> {
         max_buffer_size: lunary_config.max_buffer_size,
     };
 
-    Some(CliArgs {
+    Ok(CliArgs {
         path,
         mode,
         config: bench_config,

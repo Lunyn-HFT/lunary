@@ -222,28 +222,50 @@ fn copy_8_sse2(dst: &mut [u8; 8], src: &[u8]) {
 
 #[inline(always)]
 pub fn copy_8(dst: &mut [u8; 8], src: &[u8]) {
-    #[cfg(all(feature = "simd", target_arch = "x86_64"))]
-    {
-        if is_simd_available() && src.len() >= 8 {
-            unsafe { copy_8_sse2(dst, src) };
-            return;
+    let mut handled = false;
+    dispatch_simd_level(|level| match level {
+        SimdLevel::Avx512 | SimdLevel::Avx2 | SimdLevel::Ssse3 | SimdLevel::Sse2 => {
+            #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+            {
+                if src.len() >= 8 && is_simd_available() {
+                    unsafe { copy_8_sse2(dst, src) };
+                    handled = true;
+                }
+            }
         }
+        SimdLevel::Scalar => {}
+    });
+
+    if handled {
+        return;
     }
+
     dst.copy_from_slice(&src[..8]);
 }
 
 #[inline(always)]
 pub fn copy_4(dst: &mut [u8; 4], src: &[u8]) {
-    #[cfg(all(feature = "simd", target_arch = "x86_64"))]
-    {
-        if is_simd_available() && src.len() >= 4 {
-            unsafe {
-                let v = std::ptr::read_unaligned(src.as_ptr() as *const u32);
-                std::ptr::write_unaligned(dst.as_mut_ptr() as *mut u32, v);
+    let mut handled = false;
+    dispatch_simd_level(|level| match level {
+        SimdLevel::Avx512 | SimdLevel::Avx2 | SimdLevel::Ssse3 | SimdLevel::Sse2 => {
+            #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+            {
+                if is_simd_available() && src.len() >= 4 {
+                    unsafe {
+                        let v = std::ptr::read_unaligned(src.as_ptr() as *const u32);
+                        std::ptr::write_unaligned(dst.as_mut_ptr() as *mut u32, v);
+                    }
+                    handled = true;
+                }
             }
-            return;
         }
+        SimdLevel::Scalar => {}
+    });
+
+    if handled {
+        return;
     }
+
     dst.copy_from_slice(&src[..4]);
 }
 
@@ -286,18 +308,29 @@ pub fn find_message_boundary(data: &[u8], pattern: u8) -> Option<usize> {
 
 #[inline(always)]
 pub fn validate_message_types(data: &[u8], valid_types: &[u8; 256]) -> bool {
-    #[cfg(all(feature = "simd", target_arch = "x86_64"))]
-    {
-        if is_simd_available() && data.len() >= 16 {
-            for chunk in data.chunks(16) {
-                for &byte in chunk {
-                    if valid_types[byte as usize] == 0 {
-                        return false;
+    let mut res = None;
+    dispatch_simd_level(|level| match level {
+        SimdLevel::Avx512 | SimdLevel::Avx2 | SimdLevel::Ssse3 | SimdLevel::Sse2 => {
+            #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+            {
+                if is_simd_available() && data.len() >= 16 {
+                    for chunk in data.chunks(16) {
+                        for &byte in chunk {
+                            if valid_types[byte as usize] == 0 {
+                                res = Some(false);
+                                return;
+                            }
+                        }
                     }
+                    res = Some(true);
                 }
             }
-            return true;
         }
+        SimdLevel::Scalar => {}
+    });
+
+    if let Some(v) = res {
+        return v;
     }
 
     data.iter().all(|&b| valid_types[b as usize] != 0)
@@ -313,25 +346,47 @@ fn prefetch_data_sse2(ptr: *const u8) {
 /// # Safety
 /// The caller must ensure that `ptr` is a valid pointer for prefetching operations.
 pub unsafe fn prefetch_data(ptr: *const u8) {
-    #[cfg(all(feature = "simd", target_arch = "x86_64"))]
-    {
-        if is_simd_available() {
-            unsafe { prefetch_data_sse2(ptr) };
+    dispatch_simd_level(|level| match level {
+        SimdLevel::Avx512 | SimdLevel::Avx2 | SimdLevel::Ssse3 | SimdLevel::Sse2 => {
+            #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+            {
+                if is_simd_available() {
+                    unsafe { prefetch_data_sse2(ptr) };
+                }
+            }
         }
-    }
+        SimdLevel::Scalar => {}
+    });
     let _ = ptr;
 }
 
 #[inline(always)]
 pub fn read_u64_be_simd(data: &[u8]) -> u64 {
-    #[cfg(all(feature = "simd", target_arch = "x86_64"))]
-    {
-        if is_simd_available() && data.len() >= 8 {
-            unsafe {
-                let v = std::ptr::read_unaligned(data.as_ptr() as *const u64);
-                return v.to_be();
+    let mut rv: Option<u64> = None;
+    dispatch_simd_level(|level| match level {
+        SimdLevel::Avx512 => {
+            #[cfg(all(feature = "avx512", target_arch = "x86_64"))]
+            {
+                if data.len() >= 8 && is_avx512_available() {
+                    let v = unsafe { std::ptr::read_unaligned(data.as_ptr() as *const u64) };
+                    rv = Some(v.swap_bytes());
+                }
             }
         }
+        SimdLevel::Avx2 | SimdLevel::Ssse3 | SimdLevel::Sse2 => {
+            #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+            {
+                if data.len() >= 8 && is_simd_available() {
+                    let v = unsafe { std::ptr::read_unaligned(data.as_ptr() as *const u64) };
+                    rv = Some(v.to_be());
+                }
+            }
+        }
+        SimdLevel::Scalar => {}
+    });
+
+    if let Some(v) = rv {
+        return v;
     }
 
     u64::from_be_bytes([
@@ -341,14 +396,22 @@ pub fn read_u64_be_simd(data: &[u8]) -> u64 {
 
 #[inline(always)]
 pub fn read_u32_be_simd(data: &[u8]) -> u32 {
-    #[cfg(all(feature = "simd", target_arch = "x86_64"))]
-    {
-        if is_simd_available() && data.len() >= 4 {
-            unsafe {
-                let v = std::ptr::read_unaligned(data.as_ptr() as *const u32);
-                return v.to_be();
+    let mut rv = None;
+    dispatch_simd_level(|level| match level {
+        SimdLevel::Avx512 | SimdLevel::Avx2 | SimdLevel::Ssse3 | SimdLevel::Sse2 => {
+            #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+            {
+                if is_simd_available() && data.len() >= 4 {
+                    let v = unsafe { std::ptr::read_unaligned(data.as_ptr() as *const u32) };
+                    rv = Some(v.to_be());
+                }
             }
         }
+        SimdLevel::Scalar => {}
+    });
+
+    if let Some(v) = rv {
+        return v;
     }
 
     u32::from_be_bytes([data[0], data[1], data[2], data[3]])
@@ -356,14 +419,22 @@ pub fn read_u32_be_simd(data: &[u8]) -> u32 {
 
 #[inline(always)]
 pub fn read_u16_be_simd(data: &[u8]) -> u16 {
-    #[cfg(all(feature = "simd", target_arch = "x86_64"))]
-    {
-        if is_simd_available() && data.len() >= 2 {
-            unsafe {
-                let v = std::ptr::read_unaligned(data.as_ptr() as *const u16);
-                return v.to_be();
+    let mut rv = None;
+    dispatch_simd_level(|level| match level {
+        SimdLevel::Avx512 | SimdLevel::Avx2 | SimdLevel::Ssse3 | SimdLevel::Sse2 => {
+            #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+            {
+                if is_simd_available() && data.len() >= 2 {
+                    let v = unsafe { std::ptr::read_unaligned(data.as_ptr() as *const u16) };
+                    rv = Some(v.to_be());
+                }
             }
         }
+        SimdLevel::Scalar => {}
+    });
+
+    if let Some(v) = rv {
+        return v;
     }
 
     u16::from_be_bytes([data[0], data[1]])
@@ -371,19 +442,27 @@ pub fn read_u16_be_simd(data: &[u8]) -> u16 {
 
 #[inline(always)]
 pub fn read_timestamp_simd(data: &[u8]) -> u64 {
-    #[cfg(all(feature = "simd", target_arch = "x86_64"))]
-    {
-        if is_simd_available() && data.len() >= 6 {
-            unsafe {
-                let b0 = *data.get_unchecked(0) as u64;
-                let b1 = *data.get_unchecked(1) as u64;
-                let b2 = *data.get_unchecked(2) as u64;
-                let b3 = *data.get_unchecked(3) as u64;
-                let b4 = *data.get_unchecked(4) as u64;
-                let b5 = *data.get_unchecked(5) as u64;
-                return (b0 << 40) | (b1 << 32) | (b2 << 24) | (b3 << 16) | (b4 << 8) | b5;
+    let mut rv = None;
+    dispatch_simd_level(|level| match level {
+        SimdLevel::Avx512 | SimdLevel::Avx2 | SimdLevel::Ssse3 | SimdLevel::Sse2 => {
+            #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+            {
+                if is_simd_available() && data.len() >= 6 {
+                    let b0 = data[0] as u64;
+                    let b1 = data[1] as u64;
+                    let b2 = data[2] as u64;
+                    let b3 = data[3] as u64;
+                    let b4 = data[4] as u64;
+                    let b5 = data[5] as u64;
+                    rv = Some((b0 << 40) | (b1 << 32) | (b2 << 24) | (b3 << 16) | (b4 << 8) | b5);
+                }
             }
         }
+        SimdLevel::Scalar => {}
+    });
+
+    if let Some(v) = rv {
+        return v;
     }
 
     u64::from_be_bytes([0, 0, data[0], data[1], data[2], data[3], data[4], data[5]])
@@ -391,18 +470,23 @@ pub fn read_timestamp_simd(data: &[u8]) -> u64 {
 
 #[inline(always)]
 pub fn prefetch_next_message(data: &[u8], offset: usize) {
-    #[cfg(all(feature = "simd", target_arch = "x86_64"))]
-    {
-        if is_simd_available() && offset < data.len() {
-            unsafe {
-                let ptr = data.as_ptr().add(offset);
-                _mm_prefetch(ptr as *const i8, _MM_HINT_T0);
-                if offset + 64 < data.len() {
-                    _mm_prefetch(ptr.add(64) as *const i8, _MM_HINT_T1);
+    dispatch_simd_level(|level| match level {
+        SimdLevel::Avx512 | SimdLevel::Avx2 | SimdLevel::Ssse3 | SimdLevel::Sse2 => {
+            #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+            {
+                if is_simd_available() && offset < data.len() {
+                    unsafe {
+                        let ptr = data.as_ptr().add(offset);
+                        _mm_prefetch(ptr as *const i8, _MM_HINT_T0);
+                        if offset + 64 < data.len() {
+                            _mm_prefetch(ptr.add(64) as *const i8, _MM_HINT_T1);
+                        }
+                    }
                 }
             }
         }
-    }
+        SimdLevel::Scalar => {}
+    });
     let _ = (data, offset);
 }
 
@@ -422,12 +506,17 @@ fn prefetch_range_sse2(data: &[u8]) {
 
 #[inline(always)]
 pub fn prefetch_range(data: &[u8]) {
-    #[cfg(all(feature = "simd", target_arch = "x86_64"))]
-    {
-        if is_simd_available() {
-            unsafe { prefetch_range_sse2(data) };
+    dispatch_simd_level(|level| match level {
+        SimdLevel::Avx512 | SimdLevel::Avx2 | SimdLevel::Ssse3 | SimdLevel::Sse2 => {
+            #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+            {
+                if is_simd_available() {
+                    unsafe { prefetch_range_sse2(data) };
+                }
+            }
         }
-    }
+        SimdLevel::Scalar => {}
+    });
     let _ = data;
 }
 
@@ -442,12 +531,17 @@ fn prefetch_for_write_sse2(dst: &mut [u8], offset: usize) {
 
 #[inline(always)]
 pub fn prefetch_for_write(dst: &mut [u8], offset: usize) {
-    #[cfg(all(feature = "simd", target_arch = "x86_64"))]
-    {
-        if is_simd_available() && offset < dst.len() {
-            unsafe { prefetch_for_write_sse2(dst, offset) };
+    dispatch_simd_level(|level| match level {
+        SimdLevel::Avx512 | SimdLevel::Avx2 | SimdLevel::Ssse3 | SimdLevel::Sse2 => {
+            #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+            {
+                if is_simd_available() && offset < dst.len() {
+                    unsafe { prefetch_for_write_sse2(dst, offset) };
+                }
+            }
         }
-    }
+        SimdLevel::Scalar => {}
+    });
     let _ = (dst, offset);
 }
 
@@ -470,13 +564,42 @@ fn memcpy_simd_sse2(dst: &mut [u8], src: &[u8], len: usize) {
 #[inline(always)]
 pub fn memcpy_simd(dst: &mut [u8], src: &[u8]) {
     let len = dst.len().min(src.len());
-    #[cfg(all(feature = "simd", target_arch = "x86_64"))]
-    {
-        if is_simd_available() && len >= 16 {
-            unsafe { memcpy_simd_sse2(dst, src, len) };
-            return;
+    let mut handled = false;
+    dispatch_simd_level(|level| match level {
+        SimdLevel::Avx512 => {
+            #[cfg(all(feature = "avx512", target_arch = "x86_64"))]
+            {
+                if len >= 64 && is_avx512_available() {
+                    unsafe { memcpy_avx512_inner(dst, src, len) };
+                    handled = true;
+                }
+            }
         }
+        SimdLevel::Avx2 => {
+            #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+            {
+                if len >= 32 && is_avx2_available() {
+                    unsafe { memcpy_avx2_inner(dst, src, len) };
+                    handled = true;
+                }
+            }
+        }
+        SimdLevel::Ssse3 | SimdLevel::Sse2 => {
+            #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+            {
+                if len >= 16 && is_simd_available() {
+                    unsafe { memcpy_simd_sse2(dst, src, len) };
+                    handled = true;
+                }
+            }
+        }
+        SimdLevel::Scalar => {}
+    });
+
+    if handled {
+        return;
     }
+
     dst[..len].copy_from_slice(&src[..len]);
 }
 
@@ -552,11 +675,37 @@ fn find_bytes_avx2_inner(data: &[u8], pattern: u8) -> Option<usize> {
 
 #[inline(always)]
 pub fn find_bytes_avx2(data: &[u8], pattern: u8) -> Option<usize> {
-    #[cfg(all(feature = "simd", target_arch = "x86_64"))]
-    {
-        if is_avx2_available() && data.len() >= 32 {
-            return unsafe { find_bytes_avx2_inner(data, pattern) };
+    let mut res: Option<usize> = None;
+    dispatch_simd_level(|level| match level {
+        SimdLevel::Avx512 => {
+            #[cfg(all(feature = "avx512", target_arch = "x86_64"))]
+            {
+                if data.len() >= 64 && is_avx512_available() {
+                    res = unsafe { find_bytes_avx512_inner(data, pattern) };
+                }
+            }
         }
+        SimdLevel::Avx2 => {
+            #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+            {
+                if data.len() >= 32 && is_avx2_available() {
+                    res = unsafe { find_bytes_avx2_inner(data, pattern) };
+                }
+            }
+        }
+        SimdLevel::Ssse3 | SimdLevel::Sse2 => {
+            #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+            {
+                if data.len() >= 16 && is_simd_available() {
+                    res = unsafe { find_message_boundary_sse2(data, pattern) };
+                }
+            }
+        }
+        SimdLevel::Scalar => {}
+    });
+
+    if res.is_some() {
+        return res;
     }
 
     find_message_boundary(data, pattern)
@@ -624,8 +773,20 @@ fn find_bytes_avx512_inner(data: &[u8], pattern: u8) -> Option<usize> {
 #[cfg(all(feature = "avx512", target_arch = "x86_64"))]
 #[inline(always)]
 pub fn find_bytes_avx512(data: &[u8], pattern: u8) -> Option<usize> {
-    if is_avx512_available() && data.len() >= 64 {
-        return unsafe { find_bytes_avx512_inner(data, pattern) };
+    let mut res: Option<usize> = None;
+    dispatch_simd_level(|level| {
+        if level == SimdLevel::Avx512 {
+            #[cfg(all(feature = "avx512", target_arch = "x86_64"))]
+            {
+                if data.len() >= 64 && is_avx512_available() {
+                    res = unsafe { find_bytes_avx512_inner(data, pattern) };
+                }
+            }
+        }
+    });
+
+    if res.is_some() {
+        return res;
     }
 
     find_bytes_avx2(data, pattern)
@@ -793,7 +954,7 @@ unsafe fn memcpy_nontemporal_sse2(dst: *mut u8, src: *const u8, len: usize) {
 ///
 /// Caller must ensure:
 /// - `src` is valid for reads of `len` bytes
-/// - `dst` is valid for writes of `len` bytes
+/// - `dst` is valid for writes of `len` bytes and is 16-byte aligned
 /// - the regions do not overlap
 pub unsafe fn memcpy_nontemporal(dst: *mut u8, src: *const u8, len: usize) {
     unsafe {
@@ -1024,6 +1185,20 @@ pub fn scan_boundaries_auto(data: &[u8], max_messages: usize) -> BoundaryResult 
         SimdLevel::Avx512 | SimdLevel::Avx2 => scan_boundaries_avx2(data, max_messages),
         _ => scan_boundaries_with_diagnostics(data, max_messages),
     }
+}
+
+#[inline]
+pub fn best_simd_level() -> SimdLevel {
+    simd_info().best_available()
+}
+
+#[inline]
+pub fn dispatch_simd_level<R, F>(f: F) -> R
+where
+    F: FnOnce(SimdLevel) -> R,
+{
+    let level = best_simd_level();
+    f(level)
 }
 
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
@@ -1808,12 +1983,17 @@ mod tests {
 
     #[test]
     fn test_memcpy_nontemporal_large() {
-        let src = vec![42; 128];
-        let mut dst = vec![0; 128];
+        use std::alloc::{Layout, alloc, dealloc};
+        let layout = Layout::from_size_align(128, 16).unwrap();
+        let dst_ptr = unsafe { alloc(layout) };
+        let src = [42; 128];
         unsafe {
-            memcpy_nontemporal(dst.as_mut_ptr(), src.as_ptr(), 128);
+            memcpy_nontemporal(dst_ptr, src.as_ptr(), 128);
+            for i in 0..128 {
+                assert_eq!(*dst_ptr.add(i), 42);
+            }
+            dealloc(dst_ptr, layout);
         }
-        assert_eq!(dst, src);
     }
 
     #[test]
@@ -2306,7 +2486,7 @@ mod tests {
         }
 
         let width = info.register_width();
-        assert!(width >= 8 && width <= 64);
+        assert!((8..=64).contains(&width));
     }
 
     #[test]

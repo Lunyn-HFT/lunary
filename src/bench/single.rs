@@ -110,7 +110,7 @@ pub fn run_batch(data: &[u8]) -> Result<()> {
 pub fn run_mmap(data: &[u8]) -> Result<()> {
     let t0 = Instant::now();
     let mut parser = ZeroCopyParser::new(data);
-    let messages = parser.parse_all();
+    let messages: Vec<_> = parser.parse_all().collect();
     let wall = t0.elapsed();
 
     let mps = messages.len() as f64 / wall.as_secs_f64();
@@ -128,7 +128,7 @@ pub fn run_mmap(data: &[u8]) -> Result<()> {
 pub fn run_decode(data: &[u8]) -> Result<()> {
     let mut parser = Parser::default();
     let t0 = Instant::now();
-    let messages = parser.parse_all(data)?;
+    let messages = parser.parse_all(data)?.collect::<Result<Vec<_>, _>>()?;
     let wall = t0.elapsed();
 
     let mps = messages.len() as f64 / wall.as_secs_f64();

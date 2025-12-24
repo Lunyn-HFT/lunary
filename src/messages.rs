@@ -1,9 +1,10 @@
 use crate::error::ParseError;
+use memchr::memchr;
 use std::marker::PhantomData;
 
 #[inline(always)]
 fn ascii_to_str<'a>(data: &'a [u8], field: &'static str) -> Result<&'a str, ParseError> {
-    let end = data.iter().position(|&b| b == b' ').unwrap_or(data.len());
+    let end = memchr(b' ', data).unwrap_or(data.len());
     std::str::from_utf8(&data[..end]).map_err(|_| ParseError::InvalidUtf8 { field })
 }
 
