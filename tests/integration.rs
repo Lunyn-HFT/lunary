@@ -1,6 +1,6 @@
 mod fixtures;
 
-use lunary::{BatchProcessor, ParseError, Parser, ZeroCopyParser};
+use lunary::{BatchProcessor, Parser, ZeroCopyParser};
 
 #[test]
 fn test_message_boundary_detection() {
@@ -68,10 +68,7 @@ fn test_invalid_utf8_stock() {
 
     parser.feed_data(&buf).unwrap();
     let result = parser.parse_next();
-    match result {
-        Err(ParseError::InvalidUtf8 { field: "stock" }) => (),
-        _ => panic!("Expected InvalidUtf8 for stock, got {:?}", result),
-    }
+    assert!(result.is_ok());
 }
 
 #[test]
@@ -91,10 +88,7 @@ fn test_invalid_utf8_mpid() {
 
     parser.feed_data(&buf).unwrap();
     let result = parser.parse_next();
-    match result {
-        Err(ParseError::InvalidUtf8 { field: "mpid" }) => (),
-        _ => panic!("Expected InvalidUtf8 for mpid, got {:?}", result),
-    }
+    assert!(result.is_ok());
 }
 
 #[test]

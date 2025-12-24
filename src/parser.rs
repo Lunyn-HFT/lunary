@@ -513,9 +513,6 @@ impl Parser {
     fn parse_stock_directory(&self, data: &[u8], pos: &mut usize) -> Result<StockDirectoryMessage> {
         let (stock_locate, tracking_number, timestamp) = parse_common_header!(self, data, pos)?;
         let stock = self.read_stock(data, pos)?;
-        let end = stock.iter().position(|&b| b == b' ').unwrap_or(8);
-        std::str::from_utf8(&stock[..end])
-            .map_err(|_| ParseError::InvalidUtf8 { field: "stock" })?;
         let market_category = self.read_u8(data, pos)? as char;
         let financial_status_indicator = self.read_u8(data, pos)? as char;
 
@@ -548,9 +545,6 @@ impl Parser {
     ) -> Result<StockTradingActionMessage> {
         let (stock_locate, tracking_number, timestamp) = parse_common_header!(self, data, pos)?;
         let stock = self.read_stock(data, pos)?;
-        let end = stock.iter().position(|&b| b == b' ').unwrap_or(8);
-        std::str::from_utf8(&stock[..end])
-            .map_err(|_| ParseError::InvalidUtf8 { field: "stock" })?;
         let trading_state = self.read_u8(data, pos)? as char;
         let reserved = self.read_u8(data, pos)? as char;
         let reason = self.read_reason(data, pos)?;
@@ -574,9 +568,6 @@ impl Parser {
     ) -> Result<RegShoRestrictionMessage> {
         let (stock_locate, tracking_number, timestamp) = parse_common_header!(self, data, pos)?;
         let stock = self.read_stock(data, pos)?;
-        let end = stock.iter().position(|&b| b == b' ').unwrap_or(8);
-        std::str::from_utf8(&stock[..end])
-            .map_err(|_| ParseError::InvalidUtf8 { field: "stock" })?;
         let reg_sho_action = self.read_u8(data, pos)? as char;
 
         Ok(RegShoRestrictionMessage {
@@ -596,13 +587,7 @@ impl Parser {
     ) -> Result<MarketParticipantPositionMessage> {
         let (stock_locate, tracking_number, timestamp) = parse_common_header!(self, data, pos)?;
         let mpid = self.read_mpid(data, pos)?;
-        let end_mpid = mpid.iter().position(|&b| b == b' ').unwrap_or(4);
-        std::str::from_utf8(&mpid[..end_mpid])
-            .map_err(|_| ParseError::InvalidUtf8 { field: "mpid" })?;
         let stock = self.read_stock(data, pos)?;
-        let end_stock = stock.iter().position(|&b| b == b' ').unwrap_or(8);
-        std::str::from_utf8(&stock[..end_stock])
-            .map_err(|_| ParseError::InvalidUtf8 { field: "stock" })?;
         let primary_market_maker = self.read_u8(data, pos)? as char;
         let market_maker_mode = self.read_u8(data, pos)? as char;
         let market_participant_state = self.read_u8(data, pos)? as char;
@@ -655,9 +640,6 @@ impl Parser {
     ) -> Result<IpoQuotingPeriodMessage> {
         let (stock_locate, tracking_number, timestamp) = parse_common_header!(self, data, pos)?;
         let stock = self.read_stock(data, pos)?;
-        let end = stock.iter().position(|&b| b == b' ').unwrap_or(8);
-        std::str::from_utf8(&stock[..end])
-            .map_err(|_| ParseError::InvalidUtf8 { field: "stock" })?;
 
         Ok(IpoQuotingPeriodMessage {
             stock_locate,
@@ -677,9 +659,6 @@ impl Parser {
         let buy_sell_indicator = self.read_u8(data, pos)? as char;
         let shares = self.read_u32(data, pos)?;
         let stock = self.read_stock(data, pos)?;
-        let end = stock.iter().position(|&b| b == b' ').unwrap_or(8);
-        std::str::from_utf8(&stock[..end])
-            .map_err(|_| ParseError::InvalidUtf8 { field: "stock" })?;
 
         Ok(AddOrderMessage {
             stock_locate,
@@ -704,15 +683,8 @@ impl Parser {
         let buy_sell_indicator = self.read_u8(data, pos)? as char;
         let shares = self.read_u32(data, pos)?;
         let stock = self.read_stock(data, pos)?;
-        let end_stock = stock.iter().position(|&b| b == b' ').unwrap_or(8);
-        std::str::from_utf8(&stock[..end_stock])
-            .map_err(|_| ParseError::InvalidUtf8 { field: "stock" })?;
         let price = self.read_u32(data, pos)?;
         let attribution = self.read_mpid(data, pos)?;
-        let end_attr = attribution.iter().position(|&b| b == b' ').unwrap_or(4);
-        std::str::from_utf8(&attribution[..end_attr]).map_err(|_| ParseError::InvalidUtf8 {
-            field: "attribution",
-        })?;
 
         Ok(AddOrderWithMpidMessage {
             stock_locate,
