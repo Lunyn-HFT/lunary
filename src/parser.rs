@@ -404,7 +404,7 @@ impl Parser {
                 actual: data.len(),
             });
         }
-        let value = unsafe { *data.get_unchecked(*pos) };
+        let value = data[*pos];
         *pos += 1;
         Ok(value)
     }

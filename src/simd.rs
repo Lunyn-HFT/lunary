@@ -374,15 +374,13 @@ pub fn read_timestamp_simd(data: &[u8]) -> u64 {
     #[cfg(all(feature = "simd", target_arch = "x86_64"))]
     {
         if is_simd_available() && data.len() >= 6 {
-            unsafe {
-                let b0 = *data.get_unchecked(0) as u64;
-                let b1 = *data.get_unchecked(1) as u64;
-                let b2 = *data.get_unchecked(2) as u64;
-                let b3 = *data.get_unchecked(3) as u64;
-                let b4 = *data.get_unchecked(4) as u64;
-                let b5 = *data.get_unchecked(5) as u64;
-                return (b0 << 40) | (b1 << 32) | (b2 << 24) | (b3 << 16) | (b4 << 8) | b5;
-            }
+            let b0 = data[0] as u64;
+            let b1 = data[1] as u64;
+            let b2 = data[2] as u64;
+            let b3 = data[3] as u64;
+            let b4 = data[4] as u64;
+            let b5 = data[5] as u64;
+            return (b0 << 40) | (b1 << 32) | (b2 << 24) | (b3 << 16) | (b4 << 8) | b5;
         }
     }
 
