@@ -104,27 +104,38 @@ pub struct ZeroCopyMessage<'a> {
 
 impl<'a> ZeroCopyMessage<'a> {
     #[inline(always)]
-    unsafe fn read_be_u16_unchecked(payload: &[u8], offset: usize) -> u16 {
-        unsafe {
-            let ptr = payload.as_ptr().add(offset);
-            u16::from_be_bytes(std::ptr::read_unaligned(ptr as *const [u8; 2]))
-        }
+    fn read_be_u16_unchecked(payload: &[u8], offset: usize) -> u16 {
+        debug_assert!(offset + 2 <= payload.len());
+        let bytes = [payload[offset], payload[offset + 1]];
+        u16::from_be_bytes(bytes)
     }
 
     #[inline(always)]
-    unsafe fn read_be_u32_unchecked(payload: &[u8], offset: usize) -> u32 {
-        unsafe {
-            let ptr = payload.as_ptr().add(offset);
-            u32::from_be_bytes(std::ptr::read_unaligned(ptr as *const [u8; 4]))
-        }
+    fn read_be_u32_unchecked(payload: &[u8], offset: usize) -> u32 {
+        debug_assert!(offset + 4 <= payload.len());
+        let bytes = [
+            payload[offset],
+            payload[offset + 1],
+            payload[offset + 2],
+            payload[offset + 3],
+        ];
+        u32::from_be_bytes(bytes)
     }
 
     #[inline(always)]
-    unsafe fn read_be_u64_unchecked(payload: &[u8], offset: usize) -> u64 {
-        unsafe {
-            let ptr = payload.as_ptr().add(offset);
-            u64::from_be_bytes(std::ptr::read_unaligned(ptr as *const [u8; 8]))
-        }
+    fn read_be_u64_unchecked(payload: &[u8], offset: usize) -> u64 {
+        debug_assert!(offset + 8 <= payload.len());
+        let bytes = [
+            payload[offset],
+            payload[offset + 1],
+            payload[offset + 2],
+            payload[offset + 3],
+            payload[offset + 4],
+            payload[offset + 5],
+            payload[offset + 6],
+            payload[offset + 7],
+        ];
+        u64::from_be_bytes(bytes)
     }
 
     #[inline(always)]
@@ -202,7 +213,7 @@ impl<'a> ZeroCopyMessage<'a> {
         if end > self.payload.len() {
             return None;
         }
-        Some(unsafe { self.read_u16_unchecked(offset) })
+        Some(self.read_u16_unchecked(offset))
     }
 
     #[inline(always)]
@@ -211,7 +222,7 @@ impl<'a> ZeroCopyMessage<'a> {
         if end > self.payload.len() {
             return None;
         }
-        Some(unsafe { self.read_u32_unchecked(offset) })
+        Some(self.read_u32_unchecked(offset))
     }
 
     #[inline(always)]
@@ -220,7 +231,7 @@ impl<'a> ZeroCopyMessage<'a> {
         if end > self.payload.len() {
             return None;
         }
-        Some(unsafe { self.read_u64_unchecked(offset) })
+        Some(self.read_u64_unchecked(offset))
     }
 
     #[inline(always)]
@@ -239,30 +250,21 @@ impl<'a> ZeroCopyMessage<'a> {
     }
 
     #[inline(always)]
-    /// # Safety
-    ///
-    /// Caller must ensure `offset + 2 <= self.payload.len()`.
-    pub unsafe fn read_u16_unchecked(&self, offset: usize) -> u16 {
+    pub fn read_u16_unchecked(&self, offset: usize) -> u16 {
         debug_assert!(offset + 2 <= self.payload.len());
-        unsafe { Self::read_be_u16_unchecked(self.payload, offset) }
+        Self::read_be_u16_unchecked(self.payload, offset)
     }
 
     #[inline(always)]
-    /// # Safety
-    ///
-    /// Caller must ensure `offset + 4 <= self.payload.len()`.
-    pub unsafe fn read_u32_unchecked(&self, offset: usize) -> u32 {
+    pub fn read_u32_unchecked(&self, offset: usize) -> u32 {
         debug_assert!(offset + 4 <= self.payload.len());
-        unsafe { Self::read_be_u32_unchecked(self.payload, offset) }
+        Self::read_be_u32_unchecked(self.payload, offset)
     }
 
     #[inline(always)]
-    /// # Safety
-    ///
-    /// Caller must ensure `offset + 8 <= self.payload.len()`.
-    pub unsafe fn read_u64_unchecked(&self, offset: usize) -> u64 {
+    pub fn read_u64_unchecked(&self, offset: usize) -> u64 {
         debug_assert!(offset + 8 <= self.payload.len());
-        unsafe { Self::read_be_u64_unchecked(self.payload, offset) }
+        Self::read_be_u64_unchecked(self.payload, offset)
     }
 
     #[inline(always)]
@@ -636,5 +638,19 @@ mod tests {
         assert_eq!(msg.try_read_u64(0), Some(0x0001020304050607));
         assert_eq!(msg.try_read_u64(2), Some(0x0203040506070809));
         assert_eq!(msg.try_read_u64(3), None);
+    }
+
+    #[test]
+    fn test_read_unchecked_valid() {
+        let data = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+        let header_data = [0u8; 10];
+        let header = Ref::from_bytes(&header_data[..]).unwrap();
+        let msg = ZeroCopyMessage::new(0, header, &data);
+        assert_eq!(msg.read_u16_unchecked(0), 0x0001);
+        assert_eq!(msg.read_u16_unchecked(2), 0x0203);
+        assert_eq!(msg.read_u32_unchecked(0), 0x00010203);
+        assert_eq!(msg.read_u32_unchecked(2), 0x02030405);
+        assert_eq!(msg.read_u64_unchecked(0), 0x0001020304050607);
+        assert_eq!(msg.read_u64_unchecked(2), 0x0203040506070809);
     }
 }
