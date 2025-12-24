@@ -1522,11 +1522,11 @@ pub fn batch_validate_messages_simd(
 
         let msg_data = &data[offset..offset + len + 2];
 
-        if let Some(checksums) = expected_checksums {
-            if i < checksums.len() {
-                results.push(compute_checksum_scalar(msg_data) == checksums[i]);
-                continue;
-            }
+        if let Some(checksums) = expected_checksums
+            && i < checksums.len()
+        {
+            results.push(compute_checksum_scalar(msg_data) == checksums[i]);
+            continue;
         }
 
         let actual_len = u16::from_be_bytes([data[offset], data[offset + 1]]) as usize;
