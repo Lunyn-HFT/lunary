@@ -1,6 +1,7 @@
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
 use std::arch::x86_64::*;
 
+use memchr::memchr;
 use std::sync::atomic::{AtomicU8, Ordering};
 
 const SIMD_UNKNOWN: u8 = 0;
@@ -303,7 +304,7 @@ pub fn find_message_boundary(data: &[u8], pattern: u8) -> Option<usize> {
         }
     }
 
-    data.iter().position(|&b| b == pattern)
+    memchr(pattern, data)
 }
 
 #[inline(always)]
@@ -2074,7 +2075,7 @@ mod tests {
         let pattern = 255u8;
 
         let result_simd = find_message_boundary(&data, pattern);
-        let result_scalar = data.iter().position(|&b| b == pattern);
+        let result_scalar = memchr(pattern, &data);
 
         assert_eq!(result_simd, result_scalar);
     }
