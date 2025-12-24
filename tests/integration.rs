@@ -57,7 +57,7 @@ fn test_invalid_utf8_stock() {
     buf.extend_from_slice(&1000u32.to_be_bytes());
     buf.push(b'Y');
     buf.push(b'A');
-    buf.extend_from_slice(&[b'N', b'Y']);
+    buf.extend_from_slice(b"NY");
     buf.push(b' ');
     buf.push(b' ');
     buf.push(b' ');
@@ -69,7 +69,7 @@ fn test_invalid_utf8_stock() {
     parser.feed_data(&buf).unwrap();
     let result = parser.parse_next();
     match result {
-        Err(ParseError::InvalidUtf8 { field }) if field == "stock" => (),
+        Err(ParseError::InvalidUtf8 { field: "stock" }) => (),
         _ => panic!("Expected InvalidUtf8 for stock, got {:?}", result),
     }
 }
@@ -92,7 +92,7 @@ fn test_invalid_utf8_mpid() {
     parser.feed_data(&buf).unwrap();
     let result = parser.parse_next();
     match result {
-        Err(ParseError::InvalidUtf8 { field }) if field == "mpid" => (),
+        Err(ParseError::InvalidUtf8 { field: "mpid" }) => (),
         _ => panic!("Expected InvalidUtf8 for mpid, got {:?}", result),
     }
 }

@@ -1810,8 +1810,8 @@ mod tests {
     fn test_memcpy_nontemporal_large() {
         use std::alloc::{Layout, alloc, dealloc};
         let layout = Layout::from_size_align(128, 16).unwrap();
-        let dst_ptr = unsafe { alloc(layout) } as *mut u8;
-        let src = vec![42; 128];
+        let dst_ptr = unsafe { alloc(layout) };
+        let src = [42; 128];
         unsafe {
             memcpy_nontemporal(dst_ptr, src.as_ptr(), 128);
             for i in 0..128 {
@@ -2311,7 +2311,7 @@ mod tests {
         }
 
         let width = info.register_width();
-        assert!(width >= 8 && width <= 64);
+        assert!((8..=64).contains(&width));
     }
 
     #[test]
