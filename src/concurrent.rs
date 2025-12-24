@@ -393,31 +393,19 @@ impl ParallelParser {
                 while !shutdown_flag.load(Ordering::Acquire) {
                     match rx.recv() {
                         Ok(work) => {
-                            match work {
-                                WorkUnit::Owned(data_vec) => {
-                                    let data_len = data_vec.len();
-                                    match parser.parse_all(&data_vec) {
-                                        Ok(iter) => {
-                                            let messages: Result<Vec<Message>> = iter.collect();
-                                            match messages {
-                                                Ok(msgs) => {
-                                                    let msg_count = msgs.len() as u64;
-                                                    msg_counter
-                                                        .fetch_add(msg_count, Ordering::Relaxed);
-                                                    byte_counter.fetch_add(
-                                                        data_len as u64,
-                                                        Ordering::Relaxed,
-                                                    );
-                                                    stats[worker_id]
-                                                        .record_batch(msg_count, data_len as u64);
-                                                    let _ = tx.send(msgs);
-                                                }
-                                                Err(_) => {
-                                                    err_counter.fetch_add(1, Ordering::Relaxed);
-                                                    stats[worker_id].record_error();
-                                                    let _ = tx.send(Vec::new());
-                                                }
-                                            }
+                            let (data_slice, data_len) = work.as_slice();
+                            match parser.parse_all(data_slice) {
+                                Ok(iter) => {
+                                    let messages: Result<Vec<Message>> = iter.collect();
+                                    match messages {
+                                        Ok(msgs) => {
+                                            let msg_count = msgs.len() as u64;
+                                            msg_counter.fetch_add(msg_count, Ordering::Relaxed);
+                                            byte_counter
+                                                .fetch_add(data_len as u64, Ordering::Relaxed);
+                                            stats[worker_id]
+                                                .record_batch(msg_count, data_len as u64);
+                                            let _ = tx.send(msgs);
                                         }
                                         Err(_) => {
                                             err_counter.fetch_add(1, Ordering::Relaxed);
@@ -426,38 +414,10 @@ impl ParallelParser {
                                         }
                                     }
                                 }
-                                WorkUnit::ArcSlice(arc, start, end) => {
-                                    let slice = &arc[start..end];
-                                    let data_len = slice.len();
-                                    match parser.parse_all(slice) {
-                                        Ok(iter) => {
-                                            let messages: Result<Vec<Message>> = iter.collect();
-                                            match messages {
-                                                Ok(msgs) => {
-                                                    let msg_count = msgs.len() as u64;
-                                                    msg_counter
-                                                        .fetch_add(msg_count, Ordering::Relaxed);
-                                                    byte_counter.fetch_add(
-                                                        data_len as u64,
-                                                        Ordering::Relaxed,
-                                                    );
-                                                    stats[worker_id]
-                                                        .record_batch(msg_count, data_len as u64);
-                                                    let _ = tx.send(msgs);
-                                                }
-                                                Err(_) => {
-                                                    err_counter.fetch_add(1, Ordering::Relaxed);
-                                                    stats[worker_id].record_error();
-                                                    let _ = tx.send(Vec::new());
-                                                }
-                                            }
-                                        }
-                                        Err(_) => {
-                                            err_counter.fetch_add(1, Ordering::Relaxed);
-                                            stats[worker_id].record_error();
-                                            let _ = tx.send(Vec::new());
-                                        }
-                                    }
+                                Err(_) => {
+                                    err_counter.fetch_add(1, Ordering::Relaxed);
+                                    stats[worker_id].record_error();
+                                    let _ = tx.send(Vec::new());
                                 }
                             }
                             parser.reset();
@@ -485,10 +445,7 @@ impl ParallelParser {
 
     pub fn submit(&self, data: Vec<u8>) -> Result<()> {
         self.sender.send(WorkUnit::Owned(data)).map_err(|e| {
-            let size = match &e.0 {
-                WorkUnit::Owned(v) => v.len(),
-                WorkUnit::ArcSlice(_, s, e) => e - s,
-            };
+            let size = e.0.as_slice().1;
             crate::error::ParseError::BufferOverflow { size, max: 0 }
         })
     }
@@ -505,10 +462,7 @@ impl ParallelParser {
         self.sender
             .send(WorkUnit::ArcSlice(data, start, end))
             .map_err(|e| {
-                let size = match &e.0 {
-                    WorkUnit::Owned(v) => v.len(),
-                    WorkUnit::ArcSlice(_, s, e) => e - s,
-                };
+                let size = e.0.as_slice().1;
                 crate::error::ParseError::BufferOverflow { size, max: 0 }
             })
     }
@@ -1630,27 +1584,17 @@ impl WorkStealingParser {
 
                     match work {
                         Some(unit) => {
-                            match unit {
-                                WorkUnit::Owned(data_vec) => {
-                                    let data_len = data_vec.len();
-                                    match parser.parse_all(&data_vec) {
-                                        Ok(iter) => {
-                                            let messages: Result<Vec<Message>> = iter.collect();
-                                            match messages {
-                                                Ok(msgs) => {
-                                                    let msg_count = msgs.len() as u64;
-                                                    stats_ref.add_messages(msg_count);
-                                                    stats_ref.add_bytes(data_len as u64);
-                                                    ws[worker_id]
-                                                        .record_batch(msg_count, data_len as u64);
-                                                    let _ = tx.send(msgs);
-                                                }
-                                                Err(_) => {
-                                                    stats_ref.add_error();
-                                                    ws[worker_id].record_error();
-                                                    let _ = tx.send(Vec::new());
-                                                }
-                                            }
+                            let (data_slice, data_len) = unit.as_slice();
+                            match parser.parse_all(data_slice) {
+                                Ok(iter) => {
+                                    let messages: Result<Vec<Message>> = iter.collect();
+                                    match messages {
+                                        Ok(msgs) => {
+                                            let msg_count = msgs.len() as u64;
+                                            stats_ref.add_messages(msg_count);
+                                            stats_ref.add_bytes(data_len as u64);
+                                            ws[worker_id].record_batch(msg_count, data_len as u64);
+                                            let _ = tx.send(msgs);
                                         }
                                         Err(_) => {
                                             stats_ref.add_error();
@@ -1659,34 +1603,10 @@ impl WorkStealingParser {
                                         }
                                     }
                                 }
-                                WorkUnit::ArcSlice(arc, start, end) => {
-                                    let slice = &arc[start..end];
-                                    let data_len = slice.len();
-                                    match parser.parse_all(slice) {
-                                        Ok(iter) => {
-                                            let messages: Result<Vec<Message>> = iter.collect();
-                                            match messages {
-                                                Ok(msgs) => {
-                                                    let msg_count = msgs.len() as u64;
-                                                    stats_ref.add_messages(msg_count);
-                                                    stats_ref.add_bytes(data_len as u64);
-                                                    ws[worker_id]
-                                                        .record_batch(msg_count, data_len as u64);
-                                                    let _ = tx.send(msgs);
-                                                }
-                                                Err(_) => {
-                                                    stats_ref.add_error();
-                                                    ws[worker_id].record_error();
-                                                    let _ = tx.send(Vec::new());
-                                                }
-                                            }
-                                        }
-                                        Err(_) => {
-                                            stats_ref.add_error();
-                                            ws[worker_id].record_error();
-                                            let _ = tx.send(Vec::new());
-                                        }
-                                    }
+                                Err(_) => {
+                                    stats_ref.add_error();
+                                    ws[worker_id].record_error();
+                                    let _ = tx.send(Vec::new());
                                 }
                             }
                             parser.reset();
