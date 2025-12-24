@@ -204,25 +204,23 @@ fn print_results(
                 .append(true)
                 .create(true)
                 .open("results.json")?;
-            writeln!(file, "{{")?;
-            writeln!(file, "  \"file_size_mb\": {:.2},", file_size_mb)?;
-            writeln!(file, "  \"iterations\": {},", config.iterations)?;
+            let results_json: Vec<String> = results
+                .iter()
+                .map(|(name, messages, elapsed_ms, mps, variance)| {
+                    format!(
+                        "{{\"name\": \"{}\", \"messages\": {}, \"time_ms\": {:.2}, \"mps\": {:.2}, \"variance\": {:.2}}}",
+                        name, messages, elapsed_ms, mps, variance
+                    )
+                })
+                .collect();
             writeln!(
                 file,
-                "  \"warmup_iterations\": {},",
-                config.warmup_iterations
+                "{{\"file_size_mb\": {:.2}, \"iterations\": {}, \"warmup_iterations\": {}, \"results\": [{}]}}",
+                file_size_mb,
+                config.iterations,
+                config.warmup_iterations,
+                results_json.join(", ")
             )?;
-            writeln!(file, "  \"results\": [")?;
-            for (i, (name, messages, elapsed_ms, mps, variance)) in results.iter().enumerate() {
-                let comma = if i < results.len() - 1 { "," } else { "" };
-                writeln!(
-                    file,
-                    "    {{\"name\": \"{}\", \"messages\": {}, \"time_ms\": {:.2}, \"mps\": {:.2}, \"variance\": {:.2}}}{}",
-                    name, messages, elapsed_ms, mps, variance, comma
-                )?;
-            }
-            writeln!(file, "  ]")?;
-            writeln!(file, "}}")?;
             Ok(())
         }
         OutputFormat::Csv => {

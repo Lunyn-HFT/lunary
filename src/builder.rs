@@ -84,13 +84,19 @@ impl ParserBuilder {
 
     pub fn parallel(mut self, workers: usize) -> Self {
         self.config.mode = ParserMode::Parallel;
-        self.config.num_workers = workers.max(1);
+        let max_workers = std::thread::available_parallelism()
+            .map(|p| p.get() * 2)
+            .unwrap_or(16);
+        self.config.num_workers = workers.clamp(1, max_workers);
         self
     }
 
     pub fn work_stealing(mut self, workers: usize) -> Self {
         self.config.mode = ParserMode::WorkStealing;
-        self.config.num_workers = workers.max(1);
+        let max_workers = std::thread::available_parallelism()
+            .map(|p| p.get() * 2)
+            .unwrap_or(16);
+        self.config.num_workers = workers.clamp(1, max_workers);
         self
     }
 

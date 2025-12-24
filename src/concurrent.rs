@@ -285,7 +285,24 @@ impl SpscParser {
             let mut parser = Parser::new();
 
             loop {
-                if shutdown_flag.load(Ordering::Relaxed) {
+                if shutdown_flag.load(Ordering::Acquire) {
+                    while let Some(work_unit) = input_q.pop() {
+                        let (data_slice, data_len) = match &work_unit {
+                            WorkUnit::Owned(v) => (v.as_slice(), v.len()),
+                            WorkUnit::ArcSlice(arc, start, end) => {
+                                (&arc[*start..*end], end - start)
+                            }
+                        };
+                        if let Ok(iter) = parser.parse_all(data_slice)
+                            && let Ok(msgs) = iter.collect::<crate::error::Result<Vec<Message>>>()
+                        {
+                            stats_ref.add_messages(msgs.len() as u64);
+                            stats_ref.add_bytes(data_len as u64);
+                            let _ = output_q.push(msgs);
+                            *has_data_ref.0.lock() = true;
+                            has_data_ref.1.notify_one();
+                        }
+                    }
                     break;
                 }
 
@@ -326,7 +343,10 @@ impl SpscParser {
                         parser.reset();
                     }
                     None => {
-                        std::hint::spin_loop();
+                        for _ in 0..32 {
+                            std::hint::spin_loop();
+                        }
+                        std::thread::yield_now();
                     }
                 }
             }
@@ -441,7 +461,8 @@ impl Default for SpscParser {
 
 impl Drop for SpscParser {
     fn drop(&mut self) {
-        self.shutdown.store(true, Ordering::Relaxed);
+        self.shutdown.store(true, Ordering::Release);
+        self.has_data.1.notify_all();
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
         }
@@ -493,7 +514,7 @@ impl ParallelParser {
                 pin_current_thread();
                 let mut parser = Parser::new();
 
-                while !shutdown_flag.load(Ordering::Relaxed) {
+                while !shutdown_flag.load(Ordering::Acquire) {
                     match rx.recv() {
                         Ok(work) => {
                             match work {
@@ -665,7 +686,7 @@ impl ParallelParser {
     }
 
     pub fn shutdown(self) {
-        self.shutdown.store(true, Ordering::Relaxed);
+        self.shutdown.store(true, Ordering::Release);
         drop(self.sender);
         for worker in self.workers {
             let _ = worker.join();
@@ -1717,7 +1738,7 @@ impl WorkStealingParser {
                 let mut parser = Parser::new();
 
                 loop {
-                    if shutdown_flag.load(Ordering::Relaxed) {
+                    if shutdown_flag.load(Ordering::Acquire) {
                         break;
                     }
 
@@ -1879,7 +1900,8 @@ impl WorkStealingParser {
     }
 
     pub fn shutdown(self) {
-        self.shutdown.store(true, Ordering::Relaxed);
+        // Use Release ordering to ensure all previous writes are visible
+        self.shutdown.store(true, Ordering::Release);
         drop(self.result_sender);
         for worker in self.workers {
             let _ = worker.join();
