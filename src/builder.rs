@@ -2,9 +2,10 @@ use crate::concurrent::{
     AdaptiveBatchConfig, AdaptiveBatchProcessor, AdaptiveStrategy, BatchProcessor, ParallelParser,
     SpscParser, WorkStealingParser,
 };
-use crate::mmap::MmapParser;
+use crate::mmap::{MmapParser, MmapParserShared};
 use crate::parser::Parser;
 use crate::zerocopy::ZeroCopyParser;
+use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ParserMode {
@@ -187,6 +188,13 @@ impl ParserBuilder {
 
     pub fn build_mmap(&self, path: &std::path::Path) -> crate::Result<MmapParser> {
         Ok(MmapParser::open(path)?)
+    }
+
+    pub fn build_mmap_shared(
+        &self,
+        path: &std::path::Path,
+    ) -> crate::Result<Arc<MmapParserShared>> {
+        Ok(Arc::new(MmapParserShared::open(path)?))
     }
 }
 

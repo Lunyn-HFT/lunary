@@ -19,6 +19,14 @@ pub trait IntoOwned {
     fn into_owned(self) -> Self::Owned;
 }
 
+pub struct OwnedMessage {
+    pub msg_type: u8,
+    pub stock_locate: u16,
+    pub tracking_number: u16,
+    pub timestamp: u64,
+    pub payload: Vec<u8>,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct Stock<'a> {
     data: &'a [u8; 8],
@@ -276,6 +284,16 @@ impl<'a> ZeroCopyMessage<'a> {
     pub fn is_empty(&self) -> bool {
         self.payload.is_empty()
     }
+
+    pub fn into_owned(self) -> OwnedMessage {
+        OwnedMessage {
+            msg_type: self.msg_type(),
+            stock_locate: self.stock_locate(),
+            tracking_number: self.tracking_number(),
+            timestamp: self.timestamp(),
+            payload: self.payload.to_vec(),
+        }
+    }
 }
 
 impl<'a> ParseMessage<'a> for ZeroCopyMessage<'a> {
@@ -362,6 +380,14 @@ impl<'a> ZeroCopyParser<'a> {
     #[inline]
     pub fn parse_all(&mut self) -> impl Iterator<Item = ZeroCopyMessage<'a>> + '_ {
         std::iter::from_fn(move || self.parse_next())
+    }
+
+    pub fn parse_all_owned(&mut self) -> Vec<OwnedMessage> {
+        let mut out = Vec::new();
+        while let Some(msg) = self.parse_next() {
+            out.push(msg.into_owned());
+        }
+        out
     }
 
     #[inline]
