@@ -793,7 +793,7 @@ unsafe fn memcpy_nontemporal_sse2(dst: *mut u8, src: *const u8, len: usize) {
 ///
 /// Caller must ensure:
 /// - `src` is valid for reads of `len` bytes
-/// - `dst` is valid for writes of `len` bytes
+/// - `dst` is valid for writes of `len` bytes and is 16-byte aligned
 /// - the regions do not overlap
 pub unsafe fn memcpy_nontemporal(dst: *mut u8, src: *const u8, len: usize) {
     unsafe {
@@ -1808,12 +1808,17 @@ mod tests {
 
     #[test]
     fn test_memcpy_nontemporal_large() {
+        use std::alloc::{Layout, alloc, dealloc};
+        let layout = Layout::from_size_align(128, 16).unwrap();
+        let dst_ptr = unsafe { alloc(layout) } as *mut u8;
         let src = vec![42; 128];
-        let mut dst = vec![0; 128];
         unsafe {
-            memcpy_nontemporal(dst.as_mut_ptr(), src.as_ptr(), 128);
+            memcpy_nontemporal(dst_ptr, src.as_ptr(), 128);
+            for i in 0..128 {
+                assert_eq!(*dst_ptr.add(i), 42);
+            }
+            dealloc(dst_ptr, layout);
         }
-        assert_eq!(dst, src);
     }
 
     #[test]

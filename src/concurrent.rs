@@ -137,8 +137,8 @@ pub struct SpscQueue<T> {
     _pad2: [u8; CACHE_LINE_SIZE - std::mem::size_of::<AtomicUsize>()],
     tail: AtomicUsize,
     _pad3: [u8; CACHE_LINE_SIZE - std::mem::size_of::<AtomicUsize>()],
-    cached_head: std::cell::Cell<usize>,
-    cached_tail: std::cell::Cell<usize>,
+    cached_head: AtomicUsize,
+    cached_tail: AtomicUsize,
 }
 
 unsafe impl<T: Send> Send for SpscQueue<T> {}
@@ -161,8 +161,8 @@ impl<T> SpscQueue<T> {
             _pad2: [0; CACHE_LINE_SIZE - std::mem::size_of::<AtomicUsize>()],
             tail: AtomicUsize::new(0),
             _pad3: [0; CACHE_LINE_SIZE - std::mem::size_of::<AtomicUsize>()],
-            cached_head: std::cell::Cell::new(0),
-            cached_tail: std::cell::Cell::new(0),
+            cached_head: AtomicUsize::new(0),
+            cached_tail: AtomicUsize::new(0),
         }
     }
 
@@ -171,10 +171,10 @@ impl<T> SpscQueue<T> {
         let tail = self.tail.load(Ordering::Relaxed);
         let next_tail = (tail + 1) % SPSC_BUFFER_SIZE;
 
-        let cached = self.cached_head.get();
+        let cached = self.cached_head.load(Ordering::Relaxed);
         if next_tail == cached {
             let head = self.head.load(Ordering::Acquire);
-            self.cached_head.set(head);
+            self.cached_head.store(head, Ordering::Relaxed);
             if next_tail == head {
                 return Err(value);
             }
@@ -191,10 +191,10 @@ impl<T> SpscQueue<T> {
     pub fn pop(&self) -> Option<T> {
         let head = self.head.load(Ordering::Relaxed);
 
-        let cached = self.cached_tail.get();
+        let cached = self.cached_tail.load(Ordering::Relaxed);
         if head == cached {
             let tail = self.tail.load(Ordering::Acquire);
-            self.cached_tail.set(tail);
+            self.cached_tail.store(tail, Ordering::Relaxed);
             if head == tail {
                 return None;
             }
