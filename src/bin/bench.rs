@@ -9,7 +9,7 @@ use lunary::bench::{
 };
 
 fn main() -> Result<()> {
-    let cli_args = parse_cli_args().unwrap();
+    let cli_args = parse_cli_args().ok_or_else(|| anyhow::anyhow!("failed to parse CLI args"))?;
 
     let path = cli_args.path;
     let mode = cli_args.mode;
