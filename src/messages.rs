@@ -42,6 +42,7 @@ pub enum Message {
     NetOrderImbalance(NetOrderImbalanceMessage),
     RetailPriceImprovement(RetailPriceImprovementMessage),
     LuldAuctionCollar(LuldAuctionCollarMessage),
+    DirectListing(DirectListingMessage),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -67,6 +68,7 @@ pub enum MessageRef<'a> {
     NetOrderImbalance(NetOrderImbalanceRef<'a>),
     RetailPriceImprovement(RetailPriceImprovementRef<'a>),
     LuldAuctionCollar(LuldAuctionCollarRef<'a>),
+    DirectListing(DirectListingRef<'a>),
 }
 
 macro_rules! message_ref_to_owned_match {
@@ -99,6 +101,7 @@ macro_rules! message_ref_to_owned_match {
                 Message::RetailPriceImprovement(r.to_owned_message())
             }
             MessageRef::LuldAuctionCollar(r) => Message::LuldAuctionCollar(r.to_owned_message()),
+            MessageRef::DirectListing(r) => Message::DirectListing(r.to_owned_message()),
         }
     };
 }
@@ -136,6 +139,7 @@ macro_rules! message_ref_timestamp_match {
             MessageRef::NetOrderImbalance(r) => r.timestamp,
             MessageRef::RetailPriceImprovement(r) => r.timestamp,
             MessageRef::LuldAuctionCollar(r) => r.timestamp,
+            MessageRef::DirectListing(r) => r.timestamp,
         }
     };
 }
@@ -164,6 +168,7 @@ macro_rules! message_ref_stock_locate_match {
             MessageRef::NetOrderImbalance(r) => r.stock_locate,
             MessageRef::RetailPriceImprovement(r) => r.stock_locate,
             MessageRef::LuldAuctionCollar(r) => r.stock_locate,
+            MessageRef::DirectListing(r) => r.stock_locate,
         }
     };
 }
@@ -1168,6 +1173,48 @@ impl<'a> ToOwnedMessage for LuldAuctionCollarRef<'a> {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct DirectListingRef<'a> {
+    pub stock_locate: u16,
+    pub tracking_number: u16,
+    pub timestamp: u64,
+    pub stock: &'a [u8; 8],
+    pub reference_price: u32,
+    pub indicative_price: u32,
+    pub reserve_shares: u32,
+    pub reserve_price: u32,
+}
+
+impl<'a> DirectListingRef<'a> {
+    #[inline]
+    pub fn stock_str(&self) -> Result<&str, ParseError> {
+        ascii_to_str(self.stock, "stock")
+    }
+
+    #[inline]
+    pub fn to_owned(&self) -> DirectListingMessage {
+        self.to_owned_message()
+    }
+}
+
+impl<'a> ToOwnedMessage for DirectListingRef<'a> {
+    type Owned = DirectListingMessage;
+
+    #[inline]
+    fn to_owned_message(&self) -> DirectListingMessage {
+        DirectListingMessage {
+            stock_locate: self.stock_locate,
+            tracking_number: self.tracking_number,
+            timestamp: self.timestamp,
+            stock: *self.stock,
+            reference_price: self.reference_price,
+            indicative_price: self.indicative_price,
+            reserve_shares: self.reserve_shares,
+            reserve_price: self.reserve_price,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct SystemEventMessage {
     pub stock_locate: u16,
     pub tracking_number: u16,
@@ -1402,4 +1449,16 @@ pub struct LuldAuctionCollarMessage {
     pub upper_auction_collar_price: u32,
     pub lower_auction_collar_price: u32,
     pub auction_collar_extension: u32,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DirectListingMessage {
+    pub stock_locate: u16,
+    pub tracking_number: u16,
+    pub timestamp: u64,
+    pub stock: [u8; 8],
+    pub reference_price: u32,
+    pub indicative_price: u32,
+    pub reserve_shares: u32,
+    pub reserve_price: u32,
 }

@@ -327,6 +327,7 @@ impl Parser {
         LuldAuctionCollar,
         parse_luld_auction_collar
     );
+    dispatch_fn!(dispatch_direct_listing, DirectListing, parse_direct_listing);
 
     #[inline(always)]
     fn read_u16(&self, data: &[u8], pos: &mut usize) -> Result<u16> {
@@ -887,6 +888,28 @@ impl Parser {
         })
     }
 
+    fn parse_direct_listing(&self, data: &[u8], pos: &mut usize) -> Result<DirectListingMessage> {
+        let stock_locate = self.read_u16(data, pos)?;
+        let tracking_number = self.read_u16(data, pos)?;
+        let timestamp = self.read_timestamp(data, pos)?;
+        let stock = self.read_stock(data, pos)?;
+        let reference_price = self.read_u32(data, pos)?;
+        let indicative_price = self.read_u32(data, pos)?;
+        let reserve_shares = self.read_u32(data, pos)?;
+        let reserve_price = self.read_u32(data, pos)?;
+
+        Ok(DirectListingMessage {
+            stock_locate,
+            tracking_number,
+            timestamp,
+            stock,
+            reference_price,
+            indicative_price,
+            reserve_shares,
+            reserve_price,
+        })
+    }
+
     #[inline]
     pub fn reset(&mut self) {
         self.buffer.clear();
@@ -917,6 +940,7 @@ const EXPECTED_LENGTHS: [u16; 256] = {
     arr[b'I' as usize] = 50;
     arr[b'N' as usize] = 20;
     arr[b'J' as usize] = 35;
+    arr[b'O' as usize] = 35;
     arr
 };
 
@@ -945,6 +969,7 @@ static DISPATCH: [DispatchEntry; 256] = {
     tbl[b'I' as usize] = Some(Parser::dispatch_noii);
     tbl[b'N' as usize] = Some(Parser::dispatch_rpi);
     tbl[b'J' as usize] = Some(Parser::dispatch_luld_auction_collar);
+    tbl[b'O' as usize] = Some(Parser::dispatch_direct_listing);
     tbl
 };
 

@@ -24,16 +24,17 @@ pub use config::Config;
 pub use error::{ParseError, ParseResult, Result};
 pub use messages::{
     AddOrderMessage, AddOrderRef, AddOrderWithMpidMessage, AddOrderWithMpidRef, BrokenTradeMessage,
-    BrokenTradeRef, CrossTradeMessage, CrossTradeRef, IpoQuotingPeriodMessage, IpoQuotingPeriodRef,
-    LuldAuctionCollarMessage, LuldAuctionCollarRef, MarketParticipantPositionMessage,
-    MarketParticipantPositionRef, Message, MessageRef, MwcbDeclineLevelMessage,
-    MwcbDeclineLevelRef, MwcbStatusMessage, MwcbStatusRef, NetOrderImbalanceMessage,
-    NetOrderImbalanceRef, OrderCancelMessage, OrderCancelRef, OrderDeleteMessage, OrderDeleteRef,
-    OrderExecutedMessage, OrderExecutedRef, OrderExecutedWithPriceMessage,
-    OrderExecutedWithPriceRef, OrderReplaceMessage, OrderReplaceRef, RegShoRestrictionMessage,
-    RegShoRestrictionRef, RetailPriceImprovementMessage, RetailPriceImprovementRef,
-    StockDirectoryMessage, StockDirectoryRef, StockTradingActionMessage, StockTradingActionRef,
-    SystemEventMessage, SystemEventRef, ToOwnedMessage, TradeMessage, TradeRef, ZeroCopyParse,
+    BrokenTradeRef, CrossTradeMessage, CrossTradeRef, DirectListingMessage, DirectListingRef,
+    IpoQuotingPeriodMessage, IpoQuotingPeriodRef, LuldAuctionCollarMessage, LuldAuctionCollarRef,
+    MarketParticipantPositionMessage, MarketParticipantPositionRef, Message, MessageRef,
+    MwcbDeclineLevelMessage, MwcbDeclineLevelRef, MwcbStatusMessage, MwcbStatusRef,
+    NetOrderImbalanceMessage, NetOrderImbalanceRef, OrderCancelMessage, OrderCancelRef,
+    OrderDeleteMessage, OrderDeleteRef, OrderExecutedMessage, OrderExecutedRef,
+    OrderExecutedWithPriceMessage, OrderExecutedWithPriceRef, OrderReplaceMessage, OrderReplaceRef,
+    RegShoRestrictionMessage, RegShoRestrictionRef, RetailPriceImprovementMessage,
+    RetailPriceImprovementRef, StockDirectoryMessage, StockDirectoryRef, StockTradingActionMessage,
+    StockTradingActionRef, SystemEventMessage, SystemEventRef, ToOwnedMessage, TradeMessage,
+    TradeRef, ZeroCopyParse,
 };
 pub use mmap::{ChunkedMmapParser, MmapParser};
 pub use parser::{ParseStats, Parser};

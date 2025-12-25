@@ -1433,6 +1433,7 @@ pub fn is_valid_message_type(msg_type: u8) -> bool {
             | b'I'
             | b'N'
             | b'J'
+            | b'O'
     )
 }
 
@@ -1727,7 +1728,7 @@ impl ValidationResult {
 
 const VALID_MSG_TYPES: [u8; 22] = [
     b'S', b'R', b'H', b'Y', b'L', b'V', b'W', b'K', b'A', b'F', b'E', b'C', b'X', b'D', b'U', b'P',
-    b'Q', b'B', b'I', b'N', b'J', b'h',
+    b'Q', b'B', b'I', b'N', b'J', b'O',
 ];
 
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
