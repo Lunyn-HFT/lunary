@@ -40,7 +40,6 @@ pub struct Parser {
     messages_parsed: AtomicU64,
     bytes_processed: AtomicU64,
     config: Config,
-    _pad: [u8; CACHE_LINE_SIZE - 40],
 }
 
 #[repr(C, align(64))]
@@ -76,7 +75,6 @@ impl Parser {
             messages_parsed: AtomicU64::new(0),
             bytes_processed: AtomicU64::new(0),
             config,
-            _pad: [0u8; CACHE_LINE_SIZE - 40],
         }
     }
 
@@ -91,7 +89,6 @@ impl Parser {
             messages_parsed: AtomicU64::new(0),
             bytes_processed: AtomicU64::new(0),
             config,
-            _pad: [0u8; CACHE_LINE_SIZE - 40],
         }
     }
 
