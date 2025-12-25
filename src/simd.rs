@@ -332,7 +332,7 @@ pub fn read_u64_be_simd(data: &[u8]) -> u64 {
             {
                 if data.len() >= 8 && is_avx512_available() {
                     let v = unsafe { std::ptr::read_unaligned(data.as_ptr() as *const u64) };
-                    rv = Some(v.swap_bytes());
+                    rv = Some(v.to_be());
                 }
             }
         }
@@ -767,7 +767,7 @@ pub fn read_u64_be_avx512(data: &[u8]) -> u64 {
     if is_avx512_available() && data.len() >= 8 {
         unsafe {
             let v = std::ptr::read_unaligned(data.as_ptr() as *const u64);
-            return v.swap_bytes();
+            return v.to_be();
         }
     }
     read_u64_be_simd(data)
