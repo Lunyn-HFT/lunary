@@ -3,17 +3,9 @@ use std::arch::x86_64::*;
 
 use memchr::memchr;
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicU8, Ordering};
 
-const SIMD_UNKNOWN: u8 = 0;
-const SIMD_AVAILABLE: u8 = 1;
-const SIMD_UNAVAILABLE: u8 = 2;
-const AVX512_UNKNOWN: u8 = 0;
-const AVX512_AVAILABLE: u8 = 1;
-const AVX512_UNAVAILABLE: u8 = 2;
-
-static SIMD_STATUS: AtomicU8 = AtomicU8::new(SIMD_UNKNOWN);
-static AVX512_STATUS: AtomicU8 = AtomicU8::new(AVX512_UNKNOWN);
+static SIMD_AVAILABLE_CACHE: OnceLock<bool> = OnceLock::new();
+static AVX512_AVAILABLE_CACHE: OnceLock<bool> = OnceLock::new();
 static BEST_SIMD_LEVEL: OnceLock<SimdLevel> = OnceLock::new();
 
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
@@ -30,23 +22,7 @@ fn detect_simd_features() -> bool {
 
 #[inline]
 pub fn is_simd_available() -> bool {
-    let status = SIMD_STATUS.load(Ordering::Relaxed);
-    match status {
-        SIMD_AVAILABLE => true,
-        SIMD_UNAVAILABLE => false,
-        _ => {
-            let available = detect_simd_features();
-            SIMD_STATUS.store(
-                if available {
-                    SIMD_AVAILABLE
-                } else {
-                    SIMD_UNAVAILABLE
-                },
-                Ordering::Relaxed,
-            );
-            available
-        }
-    }
+    *SIMD_AVAILABLE_CACHE.get_or_init(detect_simd_features)
 }
 
 #[inline]
@@ -195,23 +171,7 @@ fn detect_avx512_features() -> bool {
 
 #[inline]
 pub fn is_avx512_available() -> bool {
-    let status = AVX512_STATUS.load(Ordering::Relaxed);
-    match status {
-        AVX512_AVAILABLE => true,
-        AVX512_UNAVAILABLE => false,
-        _ => {
-            let available = detect_avx512_features();
-            AVX512_STATUS.store(
-                if available {
-                    AVX512_AVAILABLE
-                } else {
-                    AVX512_UNAVAILABLE
-                },
-                Ordering::Relaxed,
-            );
-            available
-        }
-    }
+    *AVX512_AVAILABLE_CACHE.get_or_init(detect_avx512_features)
 }
 
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
