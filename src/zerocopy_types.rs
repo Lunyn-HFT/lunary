@@ -21,15 +21,12 @@ impl MessageHeaderRaw {
 
     #[inline(always)]
     pub fn timestamp(&self) -> u64 {
-        let ptr = self.timestamp6.as_ptr();
-        unsafe {
-            let b0 = *ptr as u64;
-            let b1 = *ptr.add(1) as u64;
-            let b2 = *ptr.add(2) as u64;
-            let b3 = *ptr.add(3) as u64;
-            let b4 = *ptr.add(4) as u64;
-            let b5 = *ptr.add(5) as u64;
-            (b0 << 40) | (b1 << 32) | (b2 << 24) | (b3 << 16) | (b4 << 8) | b5
-        }
+        let ts = &self.timestamp6;
+        ((ts[0] as u64) << 40)
+            | ((ts[1] as u64) << 32)
+            | ((ts[2] as u64) << 24)
+            | ((ts[3] as u64) << 16)
+            | ((ts[4] as u64) << 8)
+            | (ts[5] as u64)
     }
 }
