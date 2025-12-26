@@ -288,7 +288,7 @@ pub fn run_feature_comparison(data: &[u8]) -> Result<()> {
         }
     }
     let parallel_time = t0.elapsed();
-    parser.shutdown();
+    let _ = parser.shutdown();
     let parallel_mps = parallel_count as f64 / parallel_time.as_secs_f64() / 1_000_000.0;
 
     println!(

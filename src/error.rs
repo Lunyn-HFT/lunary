@@ -32,6 +32,9 @@ pub enum ParseError {
     #[error("Invalid UTF-8 in field '{field}'")]
     InvalidUtf8 { field: &'static str },
 
+    #[error("Invalid timestamp: {value} nanoseconds (must be <= 86,400,000,000,000)")]
+    InvalidTimestamp { value: u64 },
+
     #[error("Parser state error: {reason}")]
     StateError { reason: &'static str },
 
@@ -59,6 +62,7 @@ impl ParseError {
                 | ParseError::InvalidHeader { .. }
                 | ParseError::LengthMismatch { .. }
                 | ParseError::InvalidUtf8 { .. }
+                | ParseError::InvalidTimestamp { .. }
         )
     }
 

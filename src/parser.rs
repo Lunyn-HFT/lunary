@@ -40,7 +40,6 @@ pub struct Parser {
     messages_parsed: AtomicU64,
     bytes_processed: AtomicU64,
     config: Config,
-    _pad: [u8; CACHE_LINE_SIZE - 40],
 }
 
 #[repr(C, align(64))]
@@ -76,7 +75,6 @@ impl Parser {
             messages_parsed: AtomicU64::new(0),
             bytes_processed: AtomicU64::new(0),
             config,
-            _pad: [0u8; CACHE_LINE_SIZE - 40],
         }
     }
 
@@ -91,7 +89,6 @@ impl Parser {
             messages_parsed: AtomicU64::new(0),
             bytes_processed: AtomicU64::new(0),
             config,
-            _pad: [0u8; CACHE_LINE_SIZE - 40],
         }
     }
 
@@ -144,8 +141,8 @@ impl Parser {
             });
         }
 
-        let compact_threshold = self.config.max_buffer_size / 2;
-        if current_len > compact_threshold {
+        let consumed_ratio = self.position as f64 / current_len.max(1) as f64;
+        if consumed_ratio > 0.5 && self.position > 0 {
             self.compact_buffer();
         }
 
@@ -175,13 +172,6 @@ impl Parser {
             let new_len = self.buffer.len() - self.position;
             self.buffer.truncate(new_len);
             self.position = 0;
-        }
-        let compact_threshold = self.config.max_buffer_size / 2;
-        if self.buffer.len() > compact_threshold {
-            let keep_size = compact_threshold / 2;
-            let start_pos = self.buffer.len() - keep_size;
-            self.buffer.copy_within(start_pos.., 0);
-            self.buffer.truncate(keep_size);
         }
     }
 
@@ -222,12 +212,18 @@ impl Parser {
         }
 
         let message_type = remaining[2];
-        let expected = EXPECTED_LENGTHS[message_type as usize] as usize;
-        if expected != 0 && expected != length {
+        let expected = EXPECTED_LENGTHS[message_type as usize];
+        if expected == NO_VALIDATION {
+            #[cfg(debug_assertions)]
+            eprintln!(
+                "Warning: no expected length for message type 0x{:02X}",
+                message_type
+            );
+        } else if expected as usize != length {
             return Err(ParseError::LengthMismatch {
                 msg_type: message_type,
                 declared: length,
-                expected,
+                expected: expected as usize,
             });
         }
 
@@ -337,6 +333,7 @@ impl Parser {
         LuldAuctionCollar,
         parse_luld_auction_collar
     );
+    dispatch_fn!(dispatch_direct_listing, DirectListing, parse_direct_listing);
 
     #[inline(always)]
     fn read_u16(&self, data: &[u8], pos: &mut usize) -> Result<u16> {
@@ -495,6 +492,10 @@ impl Parser {
             data[*pos + 5],
         ]);
         *pos += 6;
+        const MAX_VALID_TIMESTAMP: u64 = 86_400_000_000_000;
+        if self.config.strict_validation && value > MAX_VALID_TIMESTAMP {
+            return Err(ParseError::InvalidTimestamp { value });
+        }
         Ok(value)
     }
 
@@ -513,9 +514,6 @@ impl Parser {
     fn parse_stock_directory(&self, data: &[u8], pos: &mut usize) -> Result<StockDirectoryMessage> {
         let (stock_locate, tracking_number, timestamp) = parse_common_header!(self, data, pos)?;
         let stock = self.read_stock(data, pos)?;
-        let end = stock.iter().position(|&b| b == b' ').unwrap_or(8);
-        std::str::from_utf8(&stock[..end])
-            .map_err(|_| ParseError::InvalidUtf8 { field: "stock" })?;
         let market_category = self.read_u8(data, pos)? as char;
         let financial_status_indicator = self.read_u8(data, pos)? as char;
 
@@ -548,9 +546,6 @@ impl Parser {
     ) -> Result<StockTradingActionMessage> {
         let (stock_locate, tracking_number, timestamp) = parse_common_header!(self, data, pos)?;
         let stock = self.read_stock(data, pos)?;
-        let end = stock.iter().position(|&b| b == b' ').unwrap_or(8);
-        std::str::from_utf8(&stock[..end])
-            .map_err(|_| ParseError::InvalidUtf8 { field: "stock" })?;
         let trading_state = self.read_u8(data, pos)? as char;
         let reserved = self.read_u8(data, pos)? as char;
         let reason = self.read_reason(data, pos)?;
@@ -574,9 +569,6 @@ impl Parser {
     ) -> Result<RegShoRestrictionMessage> {
         let (stock_locate, tracking_number, timestamp) = parse_common_header!(self, data, pos)?;
         let stock = self.read_stock(data, pos)?;
-        let end = stock.iter().position(|&b| b == b' ').unwrap_or(8);
-        std::str::from_utf8(&stock[..end])
-            .map_err(|_| ParseError::InvalidUtf8 { field: "stock" })?;
         let reg_sho_action = self.read_u8(data, pos)? as char;
 
         Ok(RegShoRestrictionMessage {
@@ -596,13 +588,7 @@ impl Parser {
     ) -> Result<MarketParticipantPositionMessage> {
         let (stock_locate, tracking_number, timestamp) = parse_common_header!(self, data, pos)?;
         let mpid = self.read_mpid(data, pos)?;
-        let end_mpid = mpid.iter().position(|&b| b == b' ').unwrap_or(4);
-        std::str::from_utf8(&mpid[..end_mpid])
-            .map_err(|_| ParseError::InvalidUtf8 { field: "mpid" })?;
         let stock = self.read_stock(data, pos)?;
-        let end_stock = stock.iter().position(|&b| b == b' ').unwrap_or(8);
-        std::str::from_utf8(&stock[..end_stock])
-            .map_err(|_| ParseError::InvalidUtf8 { field: "stock" })?;
         let primary_market_maker = self.read_u8(data, pos)? as char;
         let market_maker_mode = self.read_u8(data, pos)? as char;
         let market_participant_state = self.read_u8(data, pos)? as char;
@@ -655,9 +641,6 @@ impl Parser {
     ) -> Result<IpoQuotingPeriodMessage> {
         let (stock_locate, tracking_number, timestamp) = parse_common_header!(self, data, pos)?;
         let stock = self.read_stock(data, pos)?;
-        let end = stock.iter().position(|&b| b == b' ').unwrap_or(8);
-        std::str::from_utf8(&stock[..end])
-            .map_err(|_| ParseError::InvalidUtf8 { field: "stock" })?;
 
         Ok(IpoQuotingPeriodMessage {
             stock_locate,
@@ -677,9 +660,6 @@ impl Parser {
         let buy_sell_indicator = self.read_u8(data, pos)? as char;
         let shares = self.read_u32(data, pos)?;
         let stock = self.read_stock(data, pos)?;
-        let end = stock.iter().position(|&b| b == b' ').unwrap_or(8);
-        std::str::from_utf8(&stock[..end])
-            .map_err(|_| ParseError::InvalidUtf8 { field: "stock" })?;
 
         Ok(AddOrderMessage {
             stock_locate,
@@ -704,15 +684,8 @@ impl Parser {
         let buy_sell_indicator = self.read_u8(data, pos)? as char;
         let shares = self.read_u32(data, pos)?;
         let stock = self.read_stock(data, pos)?;
-        let end_stock = stock.iter().position(|&b| b == b' ').unwrap_or(8);
-        std::str::from_utf8(&stock[..end_stock])
-            .map_err(|_| ParseError::InvalidUtf8 { field: "stock" })?;
         let price = self.read_u32(data, pos)?;
         let attribution = self.read_mpid(data, pos)?;
-        let end_attr = attribution.iter().position(|&b| b == b' ').unwrap_or(4);
-        std::str::from_utf8(&attribution[..end_attr]).map_err(|_| ParseError::InvalidUtf8 {
-            field: "attribution",
-        })?;
 
         Ok(AddOrderWithMpidMessage {
             stock_locate,
@@ -925,15 +898,45 @@ impl Parser {
         })
     }
 
+    fn parse_direct_listing(&self, data: &[u8], pos: &mut usize) -> Result<DirectListingMessage> {
+        let stock_locate = self.read_u16(data, pos)?;
+        let tracking_number = self.read_u16(data, pos)?;
+        let timestamp = self.read_timestamp(data, pos)?;
+        let stock = self.read_stock(data, pos)?;
+        let reference_price = self.read_u32(data, pos)?;
+        let indicative_price = self.read_u32(data, pos)?;
+        let reserve_shares = self.read_u32(data, pos)?;
+        let reserve_price = self.read_u32(data, pos)?;
+
+        Ok(DirectListingMessage {
+            stock_locate,
+            tracking_number,
+            timestamp,
+            stock,
+            reference_price,
+            indicative_price,
+            reserve_shares,
+            reserve_price,
+        })
+    }
+
     #[inline]
-    pub fn reset(&mut self) {
+    pub fn clear_buffer(&mut self) {
         self.buffer.clear();
         self.position = 0;
     }
+
+    #[inline]
+    pub fn reset(&mut self) {
+        self.clear_buffer();
+        self.reset_stats();
+    }
 }
 
+const NO_VALIDATION: u16 = u16::MAX;
+
 const EXPECTED_LENGTHS: [u16; 256] = {
-    let mut arr = [0u16; 256];
+    let mut arr = [NO_VALIDATION; 256];
     arr[b'S' as usize] = 12;
     arr[b'R' as usize] = 39;
     arr[b'H' as usize] = 25;
@@ -955,6 +958,7 @@ const EXPECTED_LENGTHS: [u16; 256] = {
     arr[b'I' as usize] = 50;
     arr[b'N' as usize] = 20;
     arr[b'J' as usize] = 35;
+    arr[b'O' as usize] = 35;
     arr
 };
 
@@ -983,6 +987,7 @@ static DISPATCH: [DispatchEntry; 256] = {
     tbl[b'I' as usize] = Some(Parser::dispatch_noii);
     tbl[b'N' as usize] = Some(Parser::dispatch_rpi);
     tbl[b'J' as usize] = Some(Parser::dispatch_luld_auction_collar);
+    tbl[b'O' as usize] = Some(Parser::dispatch_direct_listing);
     tbl
 };
 

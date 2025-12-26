@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use crate::error::Result;
+use crate::error::{ParseError, Result};
 use crate::messages::Message;
 use crate::parser::Parser;
 
@@ -133,26 +133,32 @@ pub struct SpscParser {
     worker: Option<JoinHandle<()>>,
     shutdown: Arc<AtomicBool>,
     stats: Arc<AtomicStats>,
+    last_error: Arc<Mutex<Option<ParseError>>>,
     start_time: Instant,
     has_data: Arc<(Mutex<bool>, Condvar)>,
     pending: Arc<AtomicUsize>,
+    input_available: Arc<(Mutex<bool>, Condvar)>,
 }
 
 impl SpscParser {
     pub fn new() -> Self {
-        let (input_sender, input_receiver) = bounded(4096);
+        let (input_sender, input_receiver) = bounded::<WorkUnit>(4096);
         let (output_sender, output_receiver) = bounded(4096);
         let shutdown = Arc::new(AtomicBool::new(false));
         let stats = Arc::new(AtomicStats::new());
+        let last_error = Arc::new(Mutex::new(None));
         let has_data = Arc::new((Mutex::new(false), Condvar::new()));
         let pending = Arc::new(AtomicUsize::new(0));
+        let input_available = Arc::new((Mutex::new(false), Condvar::new()));
 
         let input_r = input_receiver;
         let output_s = output_sender;
         let shutdown_flag = Arc::clone(&shutdown);
         let stats_ref = Arc::clone(&stats);
+        let last_error_ref = Arc::clone(&last_error);
         let has_data_ref = Arc::clone(&has_data);
         let pending_ref = Arc::clone(&pending);
+        let input_available_ref = Arc::clone(&input_available);
 
         let worker = thread::spawn(move || {
             pin_current_thread();
@@ -162,12 +168,7 @@ impl SpscParser {
                 if shutdown_flag.load(Ordering::Acquire) {
                     while let Ok(work_unit) = input_r.try_recv() {
                         pending_ref.fetch_sub(1, Ordering::Relaxed);
-                        let (data_slice, data_len) = match &work_unit {
-                            WorkUnit::Owned(v) => (v.as_slice(), v.len()),
-                            WorkUnit::ArcSlice(arc, start, end) => {
-                                (&arc[*start..*end], end - start)
-                            }
-                        };
+                        let (data_slice, data_len) = work_unit.as_slice();
                         if let Ok(iter) = parser.parse_all(data_slice)
                             && let Ok(msgs) = iter.collect::<crate::error::Result<Vec<Message>>>()
                         {
@@ -184,12 +185,7 @@ impl SpscParser {
                 match input_r.try_recv() {
                     Ok(work_unit) => {
                         pending_ref.fetch_sub(1, Ordering::Relaxed);
-                        let (data_slice, data_len) = match &work_unit {
-                            WorkUnit::Owned(v) => (v.as_slice(), v.len()),
-                            WorkUnit::ArcSlice(arc, start, end) => {
-                                (&arc[*start..*end], end - start)
-                            }
-                        };
+                        let (data_slice, data_len) = work_unit.as_slice();
                         match parser.parse_all(data_slice) {
                             Ok(iter) => {
                                 let messages: Result<Vec<Message>> = iter.collect();
@@ -201,7 +197,10 @@ impl SpscParser {
                                         *has_data_ref.0.lock() = true;
                                         has_data_ref.1.notify_one();
                                     }
-                                    Err(_) => {
+                                    Err(e) => {
+                                        #[cfg(debug_assertions)]
+                                        eprintln!("SPSC parser: parse error: {:?}", e);
+                                        *last_error_ref.lock() = Some(e);
                                         stats_ref.add_error();
                                         let _ = output_s.try_send(Vec::new());
                                         *has_data_ref.0.lock() = true;
@@ -209,7 +208,10 @@ impl SpscParser {
                                     }
                                 }
                             }
-                            Err(_) => {
+                            Err(e) => {
+                                #[cfg(debug_assertions)]
+                                eprintln!("SPSC parser: parse_all error: {:?}", e);
+                                *last_error_ref.lock() = Some(e);
                                 stats_ref.add_error();
                                 let _ = output_s.try_send(Vec::new());
                                 *has_data_ref.0.lock() = true;
@@ -219,10 +221,28 @@ impl SpscParser {
                         parser.reset();
                     }
                     Err(_) => {
-                        for _ in 0..32 {
+                        for _ in 0..128 {
+                            if pending_ref.load(Ordering::Acquire) > 0
+                                || shutdown_flag.load(Ordering::Acquire)
+                            {
+                                break;
+                            }
                             std::hint::spin_loop();
                         }
-                        std::thread::yield_now();
+
+                        if pending_ref.load(Ordering::Acquire) == 0
+                            && !shutdown_flag.load(Ordering::Acquire)
+                        {
+                            let mut guard = input_available_ref.0.lock();
+                            while pending_ref.load(Ordering::Acquire) == 0
+                                && !shutdown_flag.load(Ordering::Acquire)
+                            {
+                                let _ = input_available_ref
+                                    .1
+                                    .wait_for(&mut guard, Duration::from_micros(200));
+                            }
+                            *guard = false;
+                        }
                     }
                 }
             }
@@ -234,9 +254,11 @@ impl SpscParser {
             worker: Some(worker),
             shutdown,
             stats,
+            last_error,
             start_time: Instant::now(),
             has_data,
             pending,
+            input_available,
         }
     }
 
@@ -259,6 +281,8 @@ impl SpscParser {
                 crate::error::ParseError::BufferOverflow { size, max: 4096 }
             })?;
         self.pending.fetch_add(1, Ordering::Relaxed);
+        *self.input_available.0.lock() = true;
+        self.input_available.1.notify_one();
         Ok(())
     }
 }
@@ -275,6 +299,8 @@ impl ConcurrentParser for SpscParser {
                 crate::error::ParseError::BufferOverflow { size, max: 4096 }
             })?;
         self.pending.fetch_add(1, Ordering::Relaxed);
+        *self.input_available.0.lock() = true;
+        self.input_available.1.notify_one();
         Ok(())
     }
 
@@ -283,7 +309,7 @@ impl ConcurrentParser for SpscParser {
             if let Ok(msgs) = self.output_receiver.try_recv() {
                 return Some(msgs);
             }
-            if self.shutdown.load(Ordering::Relaxed) {
+            if self.shutdown.load(Ordering::Acquire) {
                 return None;
             }
             let (lock, cvar) = &*self.has_data;
@@ -311,6 +337,16 @@ impl ConcurrentParser for SpscParser {
 
     fn bytes_processed(&self) -> u64 {
         self.stats.bytes()
+    }
+}
+
+impl SpscParser {
+    pub fn errors(&self) -> u64 {
+        self.stats.errors()
+    }
+
+    pub fn last_error(&self) -> Option<ParseError> {
+        self.last_error.lock().clone()
     }
 }
 
@@ -355,12 +391,22 @@ pub struct ParallelParser {
     bytes_processed: Arc<AtomicU64>,
     worker_stats: Arc<Vec<WorkerStats>>,
     errors: Arc<AtomicU64>,
+    last_error: Arc<Mutex<Option<ParseError>>>,
     start_time: Instant,
 }
 
 enum WorkUnit {
     Owned(Vec<u8>),
     ArcSlice(Arc<[u8]>, usize, usize),
+}
+
+impl WorkUnit {
+    fn as_slice(&self) -> (&[u8], usize) {
+        match self {
+            WorkUnit::Owned(v) => (v.as_slice(), v.len()),
+            WorkUnit::ArcSlice(arc, start, end) => (&arc[*start..*end], end - start),
+        }
+    }
 }
 
 impl ParallelParser {
@@ -372,6 +418,7 @@ impl ParallelParser {
         let messages_parsed = Arc::new(AtomicU64::new(0));
         let bytes_processed = Arc::new(AtomicU64::new(0));
         let errors = Arc::new(AtomicU64::new(0));
+        let last_error = Arc::new(Mutex::new(None));
 
         let worker_stats: Arc<Vec<WorkerStats>> =
             Arc::new((0..num_workers).map(WorkerStats::new).collect());
@@ -385,6 +432,7 @@ impl ParallelParser {
             let msg_counter = Arc::clone(&messages_parsed);
             let byte_counter = Arc::clone(&bytes_processed);
             let err_counter = Arc::clone(&errors);
+            let last_error = Arc::clone(&last_error);
             let stats = Arc::clone(&worker_stats);
 
             let handle = thread::spawn(move || {
@@ -394,71 +442,37 @@ impl ParallelParser {
                 while !shutdown_flag.load(Ordering::Acquire) {
                     match rx.recv() {
                         Ok(work) => {
-                            match work {
-                                WorkUnit::Owned(data_vec) => {
-                                    let data_len = data_vec.len();
-                                    match parser.parse_all(&data_vec) {
-                                        Ok(iter) => {
-                                            let messages: Result<Vec<Message>> = iter.collect();
-                                            match messages {
-                                                Ok(msgs) => {
-                                                    let msg_count = msgs.len() as u64;
-                                                    msg_counter
-                                                        .fetch_add(msg_count, Ordering::Relaxed);
-                                                    byte_counter.fetch_add(
-                                                        data_len as u64,
-                                                        Ordering::Relaxed,
-                                                    );
-                                                    stats[worker_id]
-                                                        .record_batch(msg_count, data_len as u64);
-                                                    let _ = tx.send(msgs);
-                                                }
-                                                Err(_) => {
-                                                    err_counter.fetch_add(1, Ordering::Relaxed);
-                                                    stats[worker_id].record_error();
-                                                    let _ = tx.send(Vec::new());
-                                                }
-                                            }
+                            let (data_slice, data_len) = work.as_slice();
+                            match parser.parse_all(data_slice) {
+                                Ok(iter) => {
+                                    let messages: Result<Vec<Message>> = iter.collect();
+                                    match messages {
+                                        Ok(msgs) => {
+                                            let msg_count = msgs.len() as u64;
+                                            msg_counter.fetch_add(msg_count, Ordering::Relaxed);
+                                            byte_counter
+                                                .fetch_add(data_len as u64, Ordering::Relaxed);
+                                            stats[worker_id]
+                                                .record_batch(msg_count, data_len as u64);
+                                            let _ = tx.send(msgs);
                                         }
-                                        Err(_) => {
+                                        Err(e) => {
+                                            #[cfg(debug_assertions)]
+                                            eprintln!("Worker {}: parse error: {:?}", worker_id, e);
+                                            *last_error.lock() = Some(e);
                                             err_counter.fetch_add(1, Ordering::Relaxed);
                                             stats[worker_id].record_error();
                                             let _ = tx.send(Vec::new());
                                         }
                                     }
                                 }
-                                WorkUnit::ArcSlice(arc, start, end) => {
-                                    let slice = &arc[start..end];
-                                    let data_len = slice.len();
-                                    match parser.parse_all(slice) {
-                                        Ok(iter) => {
-                                            let messages: Result<Vec<Message>> = iter.collect();
-                                            match messages {
-                                                Ok(msgs) => {
-                                                    let msg_count = msgs.len() as u64;
-                                                    msg_counter
-                                                        .fetch_add(msg_count, Ordering::Relaxed);
-                                                    byte_counter.fetch_add(
-                                                        data_len as u64,
-                                                        Ordering::Relaxed,
-                                                    );
-                                                    stats[worker_id]
-                                                        .record_batch(msg_count, data_len as u64);
-                                                    let _ = tx.send(msgs);
-                                                }
-                                                Err(_) => {
-                                                    err_counter.fetch_add(1, Ordering::Relaxed);
-                                                    stats[worker_id].record_error();
-                                                    let _ = tx.send(Vec::new());
-                                                }
-                                            }
-                                        }
-                                        Err(_) => {
-                                            err_counter.fetch_add(1, Ordering::Relaxed);
-                                            stats[worker_id].record_error();
-                                            let _ = tx.send(Vec::new());
-                                        }
-                                    }
+                                Err(e) => {
+                                    #[cfg(debug_assertions)]
+                                    eprintln!("Worker {}: parse_all error: {:?}", worker_id, e);
+                                    *last_error.lock() = Some(e);
+                                    err_counter.fetch_add(1, Ordering::Relaxed);
+                                    stats[worker_id].record_error();
+                                    let _ = tx.send(Vec::new());
                                 }
                             }
                             parser.reset();
@@ -480,16 +494,14 @@ impl ParallelParser {
             bytes_processed,
             worker_stats,
             errors,
+            last_error,
             start_time: Instant::now(),
         }
     }
 
     pub fn submit(&self, data: Vec<u8>) -> Result<()> {
         self.sender.send(WorkUnit::Owned(data)).map_err(|e| {
-            let size = match &e.0 {
-                WorkUnit::Owned(v) => v.len(),
-                WorkUnit::ArcSlice(_, s, e) => e - s,
-            };
+            let size = e.0.as_slice().1;
             crate::error::ParseError::BufferOverflow { size, max: 0 }
         })
     }
@@ -506,10 +518,7 @@ impl ParallelParser {
         self.sender
             .send(WorkUnit::ArcSlice(data, start, end))
             .map_err(|e| {
-                let size = match &e.0 {
-                    WorkUnit::Owned(v) => v.len(),
-                    WorkUnit::ArcSlice(_, s, e) => e - s,
-                };
+                let size = e.0.as_slice().1;
                 crate::error::ParseError::BufferOverflow { size, max: 0 }
             })
     }
@@ -552,6 +561,10 @@ impl ParallelParser {
 
     pub fn errors(&self) -> u64 {
         self.errors.load(Ordering::Relaxed)
+    }
+
+    pub fn last_error(&self) -> Option<ParseError> {
+        self.last_error.lock().clone()
     }
 
     pub fn worker_stats(&self) -> Vec<WorkerStatsSnapshot> {
@@ -670,6 +683,27 @@ fn num_cpus() -> usize {
         .unwrap_or(4)
 }
 
+fn estimate_message_count(data: &[u8]) -> usize {
+    let mut count = 0;
+    let mut offset = 0;
+    let sample_size = data.len().min(4096);
+
+    while offset + 2 <= sample_size {
+        let len = u16::from_be_bytes([data[offset], data[offset + 1]]) as usize;
+        if len == 0 || offset + len + 2 > sample_size {
+            break;
+        }
+        offset += len + 2;
+        count += 1;
+    }
+
+    if offset > 0 && count > 0 {
+        (data.len() / offset) * count
+    } else {
+        data.len() / 25
+    }
+}
+
 pub struct BatchProcessor {
     parser: Parser,
     batch_size: usize,
@@ -701,7 +735,7 @@ impl BatchProcessor {
 
     pub fn process_all(&mut self, data: &[u8]) -> Result<Vec<Message>> {
         self.parser.feed_data(data)?;
-        let estimated = data.len() / 32;
+        let estimated = estimate_message_count(data);
         let mut all_messages = Vec::with_capacity(estimated);
 
         loop {
@@ -1049,7 +1083,8 @@ impl AdaptiveBatchProcessor {
         }
         let n = self.throughput_count as f64;
         let mean = self.throughput_sum / n;
-        (self.throughput_sum_sq / n) - (mean * mean)
+        let variance = (self.throughput_sum_sq / n) - (mean * mean);
+        variance.max(0.0)
     }
 
     #[inline]
@@ -1572,6 +1607,7 @@ pub struct WorkStealingParser {
     result_receiver: Receiver<Vec<Message>>,
     shutdown: Arc<AtomicBool>,
     stats: Arc<AtomicStats>,
+    last_error: Arc<Mutex<Option<ParseError>>>,
     worker_stats: Arc<Vec<WorkerStats>>,
     start_time: Instant,
 }
@@ -1583,6 +1619,7 @@ impl WorkStealingParser {
         let (result_sender, result_receiver) = bounded::<Vec<Message>>(num_workers * 4);
         let shutdown = Arc::new(AtomicBool::new(false));
         let stats = Arc::new(AtomicStats::new());
+        let last_error = Arc::new(Mutex::new(None));
         let worker_stats: Arc<Vec<WorkerStats>> =
             Arc::new((0..num_workers).map(WorkerStats::new).collect());
 
@@ -1608,6 +1645,7 @@ impl WorkStealingParser {
             let tx = result_sender.clone();
             let shutdown_flag = Arc::clone(&shutdown);
             let stats_ref = Arc::clone(&stats);
+            let last_error_ref = Arc::clone(&last_error);
             let ws = Arc::clone(&worker_stats);
 
             let handle = thread::spawn(move || {
@@ -1631,63 +1669,41 @@ impl WorkStealingParser {
 
                     match work {
                         Some(unit) => {
-                            match unit {
-                                WorkUnit::Owned(data_vec) => {
-                                    let data_len = data_vec.len();
-                                    match parser.parse_all(&data_vec) {
-                                        Ok(iter) => {
-                                            let messages: Result<Vec<Message>> = iter.collect();
-                                            match messages {
-                                                Ok(msgs) => {
-                                                    let msg_count = msgs.len() as u64;
-                                                    stats_ref.add_messages(msg_count);
-                                                    stats_ref.add_bytes(data_len as u64);
-                                                    ws[worker_id]
-                                                        .record_batch(msg_count, data_len as u64);
-                                                    let _ = tx.send(msgs);
-                                                }
-                                                Err(_) => {
-                                                    stats_ref.add_error();
-                                                    ws[worker_id].record_error();
-                                                    let _ = tx.send(Vec::new());
-                                                }
-                                            }
+                            let (data_slice, data_len) = unit.as_slice();
+                            match parser.parse_all(data_slice) {
+                                Ok(iter) => {
+                                    let messages: Result<Vec<Message>> = iter.collect();
+                                    match messages {
+                                        Ok(msgs) => {
+                                            let msg_count = msgs.len() as u64;
+                                            stats_ref.add_messages(msg_count);
+                                            stats_ref.add_bytes(data_len as u64);
+                                            ws[worker_id].record_batch(msg_count, data_len as u64);
+                                            let _ = tx.send(msgs);
                                         }
-                                        Err(_) => {
+                                        Err(e) => {
+                                            #[cfg(debug_assertions)]
+                                            eprintln!(
+                                                "Work-stealing worker {}: parse error: {:?}",
+                                                worker_id, e
+                                            );
+                                            *last_error_ref.lock() = Some(e);
                                             stats_ref.add_error();
                                             ws[worker_id].record_error();
                                             let _ = tx.send(Vec::new());
                                         }
                                     }
                                 }
-                                WorkUnit::ArcSlice(arc, start, end) => {
-                                    let slice = &arc[start..end];
-                                    let data_len = slice.len();
-                                    match parser.parse_all(slice) {
-                                        Ok(iter) => {
-                                            let messages: Result<Vec<Message>> = iter.collect();
-                                            match messages {
-                                                Ok(msgs) => {
-                                                    let msg_count = msgs.len() as u64;
-                                                    stats_ref.add_messages(msg_count);
-                                                    stats_ref.add_bytes(data_len as u64);
-                                                    ws[worker_id]
-                                                        .record_batch(msg_count, data_len as u64);
-                                                    let _ = tx.send(msgs);
-                                                }
-                                                Err(_) => {
-                                                    stats_ref.add_error();
-                                                    ws[worker_id].record_error();
-                                                    let _ = tx.send(Vec::new());
-                                                }
-                                            }
-                                        }
-                                        Err(_) => {
-                                            stats_ref.add_error();
-                                            ws[worker_id].record_error();
-                                            let _ = tx.send(Vec::new());
-                                        }
-                                    }
+                                Err(e) => {
+                                    #[cfg(debug_assertions)]
+                                    eprintln!(
+                                        "Work-stealing worker {}: parse_all error: {:?}",
+                                        worker_id, e
+                                    );
+                                    *last_error_ref.lock() = Some(e);
+                                    stats_ref.add_error();
+                                    ws[worker_id].record_error();
+                                    let _ = tx.send(Vec::new());
                                 }
                             }
                             parser.reset();
@@ -1710,6 +1726,7 @@ impl WorkStealingParser {
             result_receiver,
             shutdown,
             stats,
+            last_error,
             worker_stats,
             start_time: Instant::now(),
         }
@@ -1719,11 +1736,17 @@ impl WorkStealingParser {
         self.injector.push(WorkUnit::Owned(data));
     }
 
-    pub fn submit_arc(&self, data: Arc<[u8]>, start: usize, end: usize) {
+    pub fn submit_arc(&self, data: Arc<[u8]>, start: usize, end: usize) -> Result<()> {
         if start >= end || end > data.len() {
-            return;
+            return Err(ParseError::InvalidArgument(format!(
+                "invalid range {}..{} for data of length {}",
+                start,
+                end,
+                data.len()
+            )));
         }
         self.injector.push(WorkUnit::ArcSlice(data, start, end));
+        Ok(())
     }
 
     pub fn submit_chunks(&self, data: Arc<[u8]>, chunk_size: usize) -> usize {
@@ -1776,13 +1799,36 @@ impl WorkStealingParser {
         self.worker_stats.len()
     }
 
-    pub fn shutdown(self) {
-        // Use Release ordering to ensure all previous writes are visible
+    pub fn shutdown(self) -> Result<Vec<Vec<Message>>> {
         self.shutdown.store(true, Ordering::Release);
+
+        let mut remaining = Vec::new();
+        while let crossbeam_deque::Steal::Success(work) = self.injector.steal() {
+            let mut parser = Parser::new();
+            let data_slice = match &work {
+                WorkUnit::Owned(v) => v.as_slice(),
+                WorkUnit::ArcSlice(arc, start, end) => &arc[*start..*end],
+            };
+            if let Ok(iter) = parser.parse_all(data_slice)
+                && let Ok(msgs) = iter.collect::<Result<Vec<_>>>()
+                && !msgs.is_empty()
+            {
+                remaining.push(msgs);
+            }
+        }
+
         drop(self.result_sender);
         for worker in self.workers {
             let _ = worker.join();
         }
+
+        while let Ok(msgs) = self.result_receiver.try_recv() {
+            if !msgs.is_empty() {
+                remaining.push(msgs);
+            }
+        }
+
+        Ok(remaining)
     }
 }
 
@@ -1816,6 +1862,12 @@ impl ConcurrentParser for WorkStealingParser {
 
     fn bytes_processed(&self) -> u64 {
         self.stats.bytes()
+    }
+}
+
+impl WorkStealingParser {
+    pub fn last_error(&self) -> Option<ParseError> {
+        self.last_error.lock().clone()
     }
 }
 

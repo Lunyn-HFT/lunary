@@ -1,17 +1,12 @@
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
 use std::arch::x86_64::*;
 
-use std::sync::atomic::{AtomicU8, Ordering};
+use memchr::memchr;
+use std::sync::OnceLock;
 
-const SIMD_UNKNOWN: u8 = 0;
-const SIMD_AVAILABLE: u8 = 1;
-const SIMD_UNAVAILABLE: u8 = 2;
-const AVX512_UNKNOWN: u8 = 0;
-const AVX512_AVAILABLE: u8 = 1;
-const AVX512_UNAVAILABLE: u8 = 2;
-
-static SIMD_STATUS: AtomicU8 = AtomicU8::new(SIMD_UNKNOWN);
-static AVX512_STATUS: AtomicU8 = AtomicU8::new(AVX512_UNKNOWN);
+static SIMD_AVAILABLE_CACHE: OnceLock<bool> = OnceLock::new();
+static AVX512_AVAILABLE_CACHE: OnceLock<bool> = OnceLock::new();
+static BEST_SIMD_LEVEL: OnceLock<SimdLevel> = OnceLock::new();
 
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
 #[inline]
@@ -27,23 +22,7 @@ fn detect_simd_features() -> bool {
 
 #[inline]
 pub fn is_simd_available() -> bool {
-    let status = SIMD_STATUS.load(Ordering::Relaxed);
-    match status {
-        SIMD_AVAILABLE => true,
-        SIMD_UNAVAILABLE => false,
-        _ => {
-            let available = detect_simd_features();
-            SIMD_STATUS.store(
-                if available {
-                    SIMD_AVAILABLE
-                } else {
-                    SIMD_UNAVAILABLE
-                },
-                Ordering::Relaxed,
-            );
-            available
-        }
-    }
+    *SIMD_AVAILABLE_CACHE.get_or_init(detect_simd_features)
 }
 
 #[inline]
@@ -192,23 +171,7 @@ fn detect_avx512_features() -> bool {
 
 #[inline]
 pub fn is_avx512_available() -> bool {
-    let status = AVX512_STATUS.load(Ordering::Relaxed);
-    match status {
-        AVX512_AVAILABLE => true,
-        AVX512_UNAVAILABLE => false,
-        _ => {
-            let available = detect_avx512_features();
-            AVX512_STATUS.store(
-                if available {
-                    AVX512_AVAILABLE
-                } else {
-                    AVX512_UNAVAILABLE
-                },
-                Ordering::Relaxed,
-            );
-            available
-        }
-    }
+    *AVX512_AVAILABLE_CACHE.get_or_init(detect_avx512_features)
 }
 
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
@@ -303,7 +266,7 @@ pub fn find_message_boundary(data: &[u8], pattern: u8) -> Option<usize> {
         }
     }
 
-    data.iter().position(|&b| b == pattern)
+    memchr(pattern, data)
 }
 
 #[inline(always)]
@@ -369,7 +332,7 @@ pub fn read_u64_be_simd(data: &[u8]) -> u64 {
             {
                 if data.len() >= 8 && is_avx512_available() {
                     let v = unsafe { std::ptr::read_unaligned(data.as_ptr() as *const u64) };
-                    rv = Some(v.swap_bytes());
+                    rv = Some(v.to_be());
                 }
             }
         }
@@ -804,7 +767,7 @@ pub fn read_u64_be_avx512(data: &[u8]) -> u64 {
     if is_avx512_available() && data.len() >= 8 {
         unsafe {
             let v = std::ptr::read_unaligned(data.as_ptr() as *const u64);
-            return v.swap_bytes();
+            return v.to_be();
         }
     }
     read_u64_be_simd(data)
@@ -949,21 +912,70 @@ unsafe fn memcpy_nontemporal_sse2(dst: *mut u8, src: *const u8, len: usize) {
 }
 
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[target_feature(enable = "avx2")]
+unsafe fn memcpy_nontemporal_avx2(dst: *mut u8, src: *const u8, len: usize) {
+    unsafe {
+        let mut i = 0;
+        while i + 32 <= len {
+            let v = _mm256_loadu_si256(src.add(i) as *const __m256i);
+            _mm256_stream_si256(dst.add(i) as *mut __m256i, v);
+            i += 32;
+        }
+        _mm_sfence();
+        if i < len {
+            std::ptr::copy_nonoverlapping(src.add(i), dst.add(i), len - i);
+        }
+    }
+}
+
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
 #[inline(always)]
 /// # Safety
 ///
 /// Caller must ensure:
 /// - `src` is valid for reads of `len` bytes
-/// - `dst` is valid for writes of `len` bytes and is 16-byte aligned
+/// - `dst` is valid for writes of `len` bytes
 /// - the regions do not overlap
 pub unsafe fn memcpy_nontemporal(dst: *mut u8, src: *const u8, len: usize) {
     unsafe {
-        if is_simd_available() && len >= 64 {
+        if is_simd_available() && len >= 64 && (dst as usize).is_multiple_of(16) {
             memcpy_nontemporal_sse2(dst, src, len);
             return;
         }
         std::ptr::copy_nonoverlapping(src, dst, len);
     }
+}
+
+pub fn safe_memcpy_nontemporal(dst: &mut [u8], src: &[u8]) -> Result<(), &'static str> {
+    if dst.len() != src.len() {
+        return Err("length mismatch");
+    }
+    let len = dst.len();
+    let src_ptr = src.as_ptr() as usize;
+    let dst_ptr = dst.as_mut_ptr() as usize;
+    let src_end = src_ptr.checked_add(len).ok_or("overflow")?;
+    let dst_end = dst_ptr.checked_add(len).ok_or("overflow")?;
+    if src_ptr < dst_end && dst_ptr < src_end {
+        return Err("overlap");
+    }
+
+    #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+    {
+        let info = simd_info();
+        if info.avx2 && is_simd_available() && len >= 64 && (dst_ptr).is_multiple_of(32) {
+            unsafe { memcpy_nontemporal_avx2(dst.as_mut_ptr(), src.as_ptr(), len) };
+            return Ok(());
+        }
+        if is_simd_available() && len >= 64 && (dst_ptr).is_multiple_of(16) {
+            unsafe { memcpy_nontemporal_sse2(dst.as_mut_ptr(), src.as_ptr(), len) };
+            return Ok(());
+        }
+    }
+
+    unsafe {
+        std::ptr::copy_nonoverlapping(src.as_ptr(), dst.as_mut_ptr(), len);
+    }
+    Ok(())
 }
 
 #[cfg(not(all(feature = "simd", target_arch = "x86_64")))]
@@ -1188,8 +1200,13 @@ pub fn scan_boundaries_auto(data: &[u8], max_messages: usize) -> BoundaryResult 
 }
 
 #[inline]
+fn get_simd_level() -> SimdLevel {
+    *BEST_SIMD_LEVEL.get_or_init(|| simd_info().best_available())
+}
+
+#[inline]
 pub fn best_simd_level() -> SimdLevel {
-    simd_info().best_available()
+    get_simd_level()
 }
 
 #[inline]
@@ -1197,7 +1214,7 @@ pub fn dispatch_simd_level<R, F>(f: F) -> R
 where
     F: FnOnce(SimdLevel) -> R,
 {
-    let level = best_simd_level();
+    let level = get_simd_level();
     f(level)
 }
 
@@ -1465,6 +1482,7 @@ pub fn is_valid_message_type(msg_type: u8) -> bool {
             | b'I'
             | b'N'
             | b'J'
+            | b'O'
     )
 }
 
@@ -1759,7 +1777,7 @@ impl ValidationResult {
 
 const VALID_MSG_TYPES: [u8; 22] = [
     b'S', b'R', b'H', b'Y', b'L', b'V', b'W', b'K', b'A', b'F', b'E', b'C', b'X', b'D', b'U', b'P',
-    b'Q', b'B', b'I', b'N', b'J', b'h',
+    b'Q', b'B', b'I', b'N', b'J', b'O',
 ];
 
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
@@ -1836,7 +1854,16 @@ pub fn validate_message_stream_simd(data: &[u8], max_errors: usize) -> Validatio
             if result.error_offsets.len() >= max_errors {
                 break;
             }
-            offset += 1;
+            if msg_len == 0 {
+                let skip = data[offset..]
+                    .iter()
+                    .take_while(|&&b| b == 0)
+                    .count()
+                    .max(1);
+                offset += skip;
+            } else {
+                offset += 1;
+            }
             continue;
         }
 
@@ -1997,6 +2024,41 @@ mod tests {
     }
 
     #[test]
+    fn test_memcpy_nontemporal_unaligned_large() {
+        use std::alloc::{Layout, alloc, dealloc};
+        let layout = Layout::from_size_align(136, 8).unwrap();
+        let base_ptr = unsafe { alloc(layout) };
+        let dst_ptr = unsafe { base_ptr.add(8) };
+        let src = [99; 128];
+        unsafe {
+            memcpy_nontemporal(dst_ptr, src.as_ptr(), 128);
+            for i in 0..128 {
+                assert_eq!(*dst_ptr.add(i), 99);
+            }
+            dealloc(base_ptr, layout);
+        }
+    }
+
+    #[test]
+    fn test_safe_memcpy_nontemporal_slice() {
+        let src = [7u8; 128];
+        let mut dst = [0u8; 128];
+        assert!(safe_memcpy_nontemporal(&mut dst, &src).is_ok());
+        assert_eq!(dst, src);
+    }
+
+    #[test]
+    fn test_safe_memcpy_nontemporal_overlap() {
+        let mut buf = vec![0u8; 256];
+        for (i, item) in buf.iter_mut().enumerate().take(256) {
+            *item = i as u8;
+        }
+        let src = unsafe { std::slice::from_raw_parts(buf.as_ptr(), 128) };
+        let dst = unsafe { std::slice::from_raw_parts_mut(buf.as_mut_ptr().add(64), 128) };
+        assert!(safe_memcpy_nontemporal(dst, src).is_err());
+    }
+
+    #[test]
     fn test_simd_level_fallback() {
         let info = SimdInfo {
             available: false,
@@ -2074,7 +2136,7 @@ mod tests {
         let pattern = 255u8;
 
         let result_simd = find_message_boundary(&data, pattern);
-        let result_scalar = data.iter().position(|&b| b == pattern);
+        let result_scalar = memchr(pattern, &data);
 
         assert_eq!(result_simd, result_scalar);
     }

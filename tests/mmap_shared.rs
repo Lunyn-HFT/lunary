@@ -9,7 +9,7 @@ fn test_mmap_shared_and_owned_messages() {
     let mut buf = Vec::new();
     for _ in 0..2 {
         buf.extend(&[0, 11]);
-        buf.push(1u8);
+        buf.push(b'S');
         buf.extend(&[0u8; 10]);
     }
 
@@ -23,5 +23,5 @@ fn test_mmap_shared_and_owned_messages() {
     assert_eq!(owned.len(), 2);
 
     drop(shared);
-    assert_eq!(owned[0].msg_type, 1u8);
+    assert_eq!(owned[0].msg_type, b'S');
 }

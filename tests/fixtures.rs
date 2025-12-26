@@ -16,6 +16,7 @@ pub fn create_uniform_buffer(count: usize, msg_type: u8, payload_len: usize) -> 
     create_test_buffer(&messages)
 }
 
+#[allow(dead_code)]
 pub fn standard_fixture() -> Vec<u8> {
     let mut messages = Vec::new();
     for i in 0..1000u16 {

@@ -51,6 +51,7 @@ impl Default for ParserConfig {
     }
 }
 
+#[derive(Default)]
 pub struct ParserBuilder {
     config: ParserConfig,
 }
@@ -195,12 +196,6 @@ impl ParserBuilder {
         path: &std::path::Path,
     ) -> crate::Result<Arc<MmapParserShared>> {
         Ok(Arc::new(MmapParserShared::open(path)?))
-    }
-}
-
-impl Default for ParserBuilder {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

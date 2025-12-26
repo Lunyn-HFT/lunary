@@ -3,6 +3,7 @@ pub struct Config {
     pub max_buffer_size: usize,
     pub max_message_size: usize,
     pub initial_capacity: usize,
+    pub strict_validation: bool,
 }
 
 impl Default for Config {
@@ -17,6 +18,7 @@ impl Config {
             max_buffer_size: 1024 * 1024 * 1024, // 1 GB
             max_message_size: 64 * 1024,         // 64 KB
             initial_capacity: 2 * 1024 * 1024,   // 2 MB
+            strict_validation: false,
         }
     }
 
@@ -37,6 +39,11 @@ impl Config {
 
     pub const fn with_initial_capacity(mut self, capacity: usize) -> Self {
         self.initial_capacity = capacity;
+        self
+    }
+
+    pub const fn with_strict_validation(mut self, strict: bool) -> Self {
+        self.strict_validation = strict;
         self
     }
 

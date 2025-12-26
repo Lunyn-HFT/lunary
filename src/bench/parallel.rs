@@ -51,7 +51,9 @@ pub fn bench_worksteal(data: &[u8]) -> Result<(u64, f64, f64)> {
     let chunks = split_into_chunks(data, chunk_size);
 
     for (start, end) in &chunks {
-        parser.submit_arc(Arc::clone(&data_arc), *start, *end);
+        parser
+            .submit_arc(Arc::clone(&data_arc), *start, *end)
+            .unwrap();
     }
 
     let mut total_messages = 0;
@@ -62,7 +64,7 @@ pub fn bench_worksteal(data: &[u8]) -> Result<(u64, f64, f64)> {
     }
 
     let wall = t0.elapsed();
-    parser.shutdown();
+    let _ = parser.shutdown();
 
     let (elapsed_ms, mps) = calculate_throughput(total_messages as u64, wall);
     Ok((total_messages as u64, elapsed_ms, mps))
@@ -206,7 +208,7 @@ pub fn run_worksteal(data: &[u8]) -> Result<()> {
         stats.errors()
     );
 
-    parser.shutdown();
+    let _ = parser.shutdown();
     Ok(())
 }
 
@@ -353,6 +355,6 @@ pub fn run_worker_stats(data: &[u8]) -> Result<()> {
         println!("Load balance: {:.1}% (100% = perfect)", balance);
     }
 
-    parser.shutdown();
+    let _ = parser.shutdown();
     Ok(())
 }

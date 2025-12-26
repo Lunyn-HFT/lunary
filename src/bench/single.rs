@@ -238,5 +238,6 @@ fn get_message_type_name(msg: &Message) -> &'static str {
         Message::NetOrderImbalance(_) => "NetOrderImbalance",
         Message::RetailPriceImprovement(_) => "RetailPriceImprovement",
         Message::LuldAuctionCollar(_) => "LuldAuctionCollar",
+        Message::DirectListing(_) => "DirectListing",
     }
 }
