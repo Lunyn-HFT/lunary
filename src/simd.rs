@@ -1854,7 +1854,16 @@ pub fn validate_message_stream_simd(data: &[u8], max_errors: usize) -> Validatio
             if result.error_offsets.len() >= max_errors {
                 break;
             }
-            offset += 1;
+            if msg_len == 0 {
+                let skip = data[offset..]
+                    .iter()
+                    .take_while(|&&b| b == 0)
+                    .count()
+                    .max(1);
+                offset += skip;
+            } else {
+                offset += 1;
+            }
             continue;
         }
 

@@ -11,9 +11,31 @@ pub struct MmapParser {
     mmap: Mmap,
 }
 
+const MAX_MMAP_SIZE: u64 = 16 * 1024 * 1024 * 1024;
+
 impl MmapParser {
     pub fn open<P: AsRef<Path>>(path: P) -> io::Result<Self> {
-        let file = File::open(path)?;
+        let file = File::open(&path)?;
+        let metadata = file.metadata()?;
+
+        if metadata.len() > MAX_MMAP_SIZE {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "File too large for mmap: {} bytes (max {})",
+                    metadata.len(),
+                    MAX_MMAP_SIZE
+                ),
+            ));
+        }
+
+        if metadata.len() == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Cannot mmap empty file",
+            ));
+        }
+
         let mmap = unsafe { Mmap::map(&file)? };
         Ok(Self { mmap })
     }
