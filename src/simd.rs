@@ -302,7 +302,9 @@ pub fn validate_message_types(data: &[u8], valid_types: &[u8; 256]) -> bool {
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
 #[target_feature(enable = "sse2")]
 fn prefetch_data_sse2(ptr: *const u8) {
-    unsafe { _mm_prefetch(ptr as *const i8, _MM_HINT_T0) };
+    unsafe {
+        _mm_prefetch(ptr as *const i8, _MM_HINT_T0);
+    }
 }
 
 #[inline(always)]
@@ -807,8 +809,18 @@ pub fn prefetch_avx512(data: &[u8], offset: usize) {
 ///
 /// Caller must ensure `pos + 8 <= data.len()`.
 pub unsafe fn read_u64_unchecked(data: &[u8], pos: usize) -> u64 {
+    debug_assert!(pos.checked_add(8).is_some_and(|end| end <= data.len()));
     let ptr = unsafe { data.as_ptr().add(pos) };
     u64::from_be_bytes(unsafe { std::ptr::read_unaligned(ptr as *const [u8; 8]) })
+}
+
+#[inline(always)]
+pub fn read_u64_checked(data: &[u8], pos: usize) -> Option<u64> {
+    let end = pos.checked_add(8)?;
+    if end > data.len() {
+        return None;
+    }
+    Some(unsafe { read_u64_unchecked(data, pos) })
 }
 
 #[inline(always)]
