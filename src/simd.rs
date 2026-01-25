@@ -302,6 +302,7 @@ pub fn validate_message_types(data: &[u8], valid_types: &[u8; 256]) -> bool {
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
 #[target_feature(enable = "sse2")]
 fn prefetch_data_sse2(ptr: *const u8) {
+    #[allow(unused_unsafe)]
     unsafe {
         _mm_prefetch(ptr as *const i8, _MM_HINT_T0);
     }
