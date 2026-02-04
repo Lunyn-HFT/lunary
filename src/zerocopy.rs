@@ -1,4 +1,5 @@
 use crate::error::ParseError;
+use crate::simd::count_messages_fast;
 use crate::zerocopy_types::MessageHeaderRaw;
 use memchr::memchr;
 use std::marker::PhantomData;
@@ -494,7 +495,8 @@ impl<'a> ZeroCopyParser<'a> {
     }
 
     pub fn parse_all_owned(&mut self) -> Vec<OwnedMessage> {
-        let mut out = Vec::new();
+        let exact_count = count_messages_fast(self.data);
+        let mut out = Vec::with_capacity(exact_count);
         while let Some(msg) = self.parse_next() {
             out.push(msg.into_owned());
         }
@@ -521,7 +523,8 @@ impl<'a> ZeroCopyParser<'a> {
     }
 
     pub fn parse_all_arc(&mut self) -> Vec<ArcOwnedMessage> {
-        let mut out = Vec::new();
+        let exact_count = count_messages_fast(self.data);
+        let mut out = Vec::with_capacity(exact_count);
         while let Some(msg) = self.parse_next() {
             out.push(msg.into_arc());
         }
@@ -671,8 +674,9 @@ impl<'a> ZeroCopyBatchProcessor<'a> {
 
     #[inline]
     pub fn process_all(&mut self) -> Vec<ZeroCopyMessage<'a>> {
-        let estimated = (self.data.len() - self.position) / 32;
-        let mut all_messages = Vec::with_capacity(estimated);
+        let remaining_data = &self.data[self.position..];
+        let exact_count = count_messages_fast(remaining_data);
+        let mut all_messages = Vec::with_capacity(exact_count);
 
         loop {
             let batch = self.process_batch();

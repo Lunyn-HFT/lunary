@@ -302,7 +302,10 @@ pub fn validate_message_types(data: &[u8], valid_types: &[u8; 256]) -> bool {
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
 #[target_feature(enable = "sse2")]
 fn prefetch_data_sse2(ptr: *const u8) {
-    unsafe { _mm_prefetch(ptr as *const i8, _MM_HINT_T0) };
+    #[allow(unused_unsafe)]
+    unsafe {
+        _mm_prefetch(ptr as *const i8, _MM_HINT_T0);
+    }
 }
 
 #[inline(always)]
@@ -807,8 +810,18 @@ pub fn prefetch_avx512(data: &[u8], offset: usize) {
 ///
 /// Caller must ensure `pos + 8 <= data.len()`.
 pub unsafe fn read_u64_unchecked(data: &[u8], pos: usize) -> u64 {
+    debug_assert!(pos.checked_add(8).is_some_and(|end| end <= data.len()));
     let ptr = unsafe { data.as_ptr().add(pos) };
     u64::from_be_bytes(unsafe { std::ptr::read_unaligned(ptr as *const [u8; 8]) })
+}
+
+#[inline(always)]
+pub fn read_u64_checked(data: &[u8], pos: usize) -> Option<u64> {
+    let end = pos.checked_add(8)?;
+    if end > data.len() {
+        return None;
+    }
+    Some(unsafe { read_u64_unchecked(data, pos) })
 }
 
 #[inline(always)]
@@ -987,7 +1000,10 @@ pub fn safe_memcpy_nontemporal(dst: &mut [u8], src: &[u8]) -> Result<(), &'stati
 /// - `dst` is valid for writes of `len` bytes
 /// - the regions do not overlap
 pub unsafe fn memcpy_nontemporal(dst: *mut u8, src: *const u8, len: usize) {
-    std::ptr::copy_nonoverlapping(src, dst, len);
+    // SAFETY: Caller guarantees above conditions
+    unsafe {
+        std::ptr::copy_nonoverlapping(src, dst, len);
+    }
 }
 
 #[inline]
@@ -1712,11 +1728,11 @@ pub fn batch_validate_messages_simd(
 
         let msg_data = &data[offset..offset + len + 2];
 
-        if let Some(checksums) = expected_checksums {
-            if i < checksums.len() {
-                results.push(compute_checksum_scalar(msg_data) == checksums[i]);
-                continue;
-            }
+        if let Some(checksums) = expected_checksums
+            && i < checksums.len()
+        {
+            results.push(compute_checksum_scalar(msg_data) == checksums[i]);
+            continue;
         }
 
         let actual_len = u16::from_be_bytes([data[offset], data[offset + 1]]) as usize;

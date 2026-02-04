@@ -146,10 +146,12 @@ impl Parser {
             self.compact_buffer();
         }
 
-        let required_cap = new_total;
-        if self.buffer.capacity() < required_cap {
-            self.buffer.reserve(required_cap - self.buffer.capacity());
-        }
+        self.buffer
+            .try_reserve(data.len())
+            .map_err(|_| ParseError::BufferOverflow {
+                size: new_total,
+                max: self.config.max_buffer_size,
+            })?;
 
         #[cfg(feature = "simd")]
         {
