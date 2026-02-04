@@ -1,6 +1,6 @@
 [package]
 name = "lunary"
-version = "0.2.4"
+version = "0.2.5"
 authors = ["Lunyn <contact@lunyn.com>"]
 edition = "2024"
 license = "AGPL-3.0-or-later"
